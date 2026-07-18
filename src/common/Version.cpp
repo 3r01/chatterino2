@@ -91,6 +91,10 @@ QStringList Version::buildTags() const
 {
     QStringList tags;
 
+#ifdef CHATTERINO_3R01_BUILD
+    tags.append(QString("3r01 build %1").arg(CHATTERINO_3R01_BUILD_NUMBER));
+#endif
+
     const auto *runtimeVersion = qVersion();
     if (runtimeVersion != QLatin1String{QT_VERSION_STR})
     {
@@ -138,10 +142,14 @@ void Version::generateBuildString()
     auto s = this->fullVersion();
 
     // Add commit information
-    s +=
-        QString(
-            R"( (commit <a href="https://github.com/Chatterino/chatterino2/commit/%1">%1</a>)")
-            .arg(this->commitHash());
+#ifdef CHATTERINO_3R01_BUILD
+    constexpr auto commitUrl =
+        R"( (commit <a href="https://github.com/3r01/chatterino2/commit/%1">%1</a>)";
+#else
+    constexpr auto commitUrl =
+        R"( (commit <a href="https://github.com/Chatterino/chatterino2/commit/%1">%1</a>)";
+#endif
+    s += QString(commitUrl).arg(this->commitHash());
     if (this->isModified())
     {
         s += " modified)";

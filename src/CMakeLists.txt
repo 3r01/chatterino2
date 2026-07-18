@@ -1173,6 +1173,13 @@ target_compile_definitions(${VERSION_PROJECT} PRIVATE
     CHATTERINO_CMAKE_GEN_DATE=\"${cmake_gen_date}\"
 )
 
+if(CHATTERINO_3R01_BUILD)
+    target_compile_definitions(${VERSION_PROJECT} PUBLIC
+        CHATTERINO_3R01_BUILD
+        CHATTERINO_3R01_BUILD_NUMBER=${CHATTERINO_3R01_BUILD_NUMBER}
+    )
+endif()
+
 target_link_libraries(${LIBRARY_PROJECT} PRIVATE ${VERSION_PROJECT})
 
 target_compile_definitions(${LIBRARY_PROJECT} PUBLIC
@@ -1190,6 +1197,13 @@ target_compile_definitions(${LIBRARY_PROJECT} PUBLIC
     # https://www.boost.org/doc/libs/latest/doc/html/boost_asio/using.html#boost_asio.using.macros
     BOOST_ASIO_NO_DEPRECATED
     )
+
+if(CHATTERINO_3R01_BUILD)
+    target_compile_definitions(${LIBRARY_PROJECT} PUBLIC
+        CHATTERINO_3R01_BUILD
+        CHATTERINO_3R01_BUILD_NUMBER=${CHATTERINO_3R01_BUILD_NUMBER}
+    )
+endif()
 
 set(_c2_qt_defs
     QT_DISABLE_DEPRECATED_BEFORE=${CHATTERINO_MIN_QT_VERSION}

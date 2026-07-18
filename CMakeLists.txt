@@ -37,6 +37,8 @@ option(CHATTERINO_USE_GDI_FONTENGINE "Use the legacy GDI fontengine instead of t
 option(CHATTERINO_ALLOW_PRIVATE_QT_API "Allow uses of Qt's private API - when enabling this, Chatterino must use the EXACT Qt version it was compiled against" OFF)
 option(CHATTERINO_SPELLCHECK "Enable spellchecking in Chatterino (requires Hunspell)" OFF)
 option(CHATTERINO_NIGHTLY_BUILD "Specifies whether this is a nightly build." OFF)
+option(CHATTERINO_3R01_BUILD "Build the 3r01 Chatterino distribution." ON)
+set(CHATTERINO_3R01_BUILD_NUMBER "0" CACHE STRING "Monotonic 3r01 release build number.")
 
 option(CHATTERINO_SANITIZER_SUPPORT "Attempt to enable Sanitizer support on the test and app targets. Actual sanitizers can then be enabled with the SANITIZE_* options." OFF)
 mark_as_advanced(CHATTERINO_SANITIZER_SUPPORT)
