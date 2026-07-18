@@ -446,6 +446,8 @@ public:
     BoolSetting enableSevenTVChannelEmotes = {"/emotes/seventv/channel", true};
     BoolSetting enableSevenTVEventAPI = {"/emotes/seventv/eventapi", true};
     BoolSetting sendSevenTVActivity = {"/emotes/seventv/sendActivity", true};
+    BoolSetting limitSevenTVEmoteHeight = {"/emotes/seventv/limitHeight",
+                                           false};
 
     ChatterinoSetting<QStringList> favouriteEmotes = {
         "/emotes/favouriteEmotes",

@@ -530,6 +530,8 @@ private:
     bool usingFallbackColor_ = false;
 
     EmotePtr emote_;
+    QSize cappedImageSize_;
+    ImagePtr cappedImage_;
 };
 
 // A LayeredEmoteElement represents multiple Emotes layered on top of each other.
@@ -571,10 +573,10 @@ private:
 
     QString getCopyString() const;
     void updateTooltips();
-    std::vector<ImagePtr> getLoadedImages(float scale);
 
     std::vector<Emote> emotes_;
     std::vector<QString> emoteTooltips_;
+    std::vector<std::pair<QSize, ImagePtr>> cappedImages_;
 
     std::unique_ptr<TextElement> textElement_;
     MessageColor textElementColor_;

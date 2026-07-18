@@ -699,6 +699,13 @@ void GeneralPage::initLayout(GeneralPageView &layout)
                             s.enableSevenTVChannelEmotes)
         ->addKeywords({"seventv"})
         ->addTo(layout);
+    SettingWidget::checkbox("Limit 7TV emote height", s.limitSevenTVEmoteHeight)
+        ->setTooltip(
+            "Scale down 7TV emotes to the same height as emotes from other "
+            "providers. Emotes that are at least 1.2 times taller than they "
+            "are wide are not affected.")
+        ->addKeywords({"seventv"})
+        ->addTo(layout);
     SettingWidget::checkbox("Enable 7TV live emote updates (requires restart)",
                             s.enableSevenTVEventAPI)
         ->addKeywords({"seventv"})

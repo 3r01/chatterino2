@@ -243,8 +243,11 @@ MessagePaintResult MessageLayout::paint(const MessagePaintContext &ctx)
     ctx.painter.drawPixmap(QPoint{0, ctx.y}, *pixmap);
 
     // draw gif emotes
+    ctx.painter.save();
+    ctx.painter.setRenderHint(QPainter::SmoothPixmapTransform);
     result.hasAnimatedElements =
         this->container_.paintAnimatedElements(ctx.painter, ctx.y);
+    ctx.painter.restore();
 
     // draw disabled
     if (this->message_->flags.has(MessageFlag::Disabled))

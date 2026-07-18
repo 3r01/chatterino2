@@ -38,19 +38,61 @@ using namespace literals;
 
 namespace {
 
-// Computes the bounding box for the given vector of images
-QSizeF getBoundingBoxSize(const std::vector<ImagePtr> &images)
+constexpr qreal MAX_EMOTE_HEIGHT = 28.0;
+constexpr qreal PORTRAIT_HEIGHT_RATIO = 1.2;
+
+QSizeF getEmoteSize(const EmotePtr &emote, const ImagePtr &image)
 {
-    qreal width = 0;
-    qreal height = 0;
-    for (const auto &img : images)
+    auto size = image->size();
+    if (emote->isSevenTV && getSettings()->limitSevenTVEmoteHeight)
     {
-        QSizeF s = img->size();
-        width = std::max(width, s.width());
-        height = std::max(height, s.height());
+        if (size.height() > MAX_EMOTE_HEIGHT &&
+            size.height() < size.width() * PORTRAIT_HEIGHT_RATIO)
+        {
+            size *= MAX_EMOTE_HEIGHT / size.height();
+        }
+    }
+    return size;
+}
+
+ImagePtr getEmoteImage(const EmotePtr &emote, float imageScale,
+                       QSize &cachedSize, ImagePtr &cachedImage)
+{
+    auto image = emote->images.getImageOrLoaded(imageScale);
+    const auto size = image->size();
+    if (!emote->isSevenTV || !getSettings()->limitSevenTVEmoteHeight ||
+        size.height() <= MAX_EMOTE_HEIGHT ||
+        size.height() >= size.width() * PORTRAIT_HEIGHT_RATIO)
+    {
+        return image;
     }
 
-    return {width, height};
+    auto source = emote->images.getImage3();
+    if (source->isEmpty())
+    {
+        source = emote->images.getImage2();
+    }
+    if (source->isEmpty())
+    {
+        source = emote->images.getImage1();
+    }
+
+    const auto renderScale = imageScale * getSettings()->emoteScale.getValue();
+    const auto targetHeight =
+        std::max(1, qRound(MAX_EMOTE_HEIGHT * renderScale));
+    const auto targetWidth =
+        std::max(1, qRound(size.width() / size.height() * targetHeight));
+    const QSize targetSize(targetWidth, targetHeight);
+
+    if (!cachedImage || cachedSize != targetSize)
+    {
+        cachedSize = targetSize;
+        cachedImage = Image::fromUrlResized(source->url(), targetSize,
+                                            MAX_EMOTE_HEIGHT / targetHeight);
+    }
+    cachedImage->load();
+
+    return cachedImage->loaded() ? cachedImage : image;
 }
 
 }  // namespace
@@ -248,8 +290,8 @@ void EmoteElement::addToContainer(MessageLayoutContainer &container,
 
     if (ctx.flags.has(MessageElementFlag::EmoteImage))
     {
-        auto image =
-            this->emote_->images.getImageOrLoaded(container.getImageScale());
+        auto image = getEmoteImage(this->emote_, container.getImageScale(),
+                                   this->cappedImageSize_, this->cappedImage_);
 
         if (image->isEmpty())
         {
@@ -259,7 +301,8 @@ void EmoteElement::addToContainer(MessageLayoutContainer &container,
         {
             auto emoteScale = getSettings()->emoteScale.getValue();
 
-            auto size = image->size() * container.getScale() * emoteScale;
+            auto size = getEmoteSize(this->emote_, image) *
+                        container.getScale() * emoteScale;
 
             container.addElement(this->makeImageLayoutElement(image, size));
             return;
@@ -331,12 +374,14 @@ LayeredEmoteElement::LayeredEmoteElement(
     , emotes_(std::move(emotes))
     , textElementColor_(textElementColor)
 {
+    this->cappedImages_.resize(this->emotes_.size());
     this->updateTooltips();
 }
 
 void LayeredEmoteElement::addEmoteLayer(const LayeredEmoteElement::Emote &emote)
 {
     this->emotes_.push_back(emote);
+    this->cappedImages_.emplace_back();
     this->updateTooltips();
 }
 
@@ -347,21 +392,36 @@ void LayeredEmoteElement::addToContainer(MessageLayoutContainer &container,
     {
         if (ctx.flags.has(MessageElementFlag::EmoteImage))
         {
-            auto images = this->getLoadedImages(container.getImageScale());
-            if (images.empty())
-            {
-                return;
-            }
-
             auto emoteScale = getSettings()->emoteScale.getValue();
             float overallScale = emoteScale * container.getScale();
 
-            auto largestSize = getBoundingBoxSize(images) * overallScale;
+            std::vector<ImagePtr> images;
+            images.reserve(this->emotes_.size());
             std::vector<QSizeF> individualSizes;
             individualSizes.reserve(this->emotes_.size());
-            for (const auto &img : images)
+            QSizeF largestSize;
+            for (size_t index = 0; index < this->emotes_.size(); ++index)
             {
-                individualSizes.push_back(img->size() * overallScale);
+                const auto &emote = this->emotes_[index];
+                auto &[cachedSize, cachedImage] = this->cappedImages_[index];
+                auto image = getEmoteImage(emote.ptr, container.getImageScale(),
+                                           cachedSize, cachedImage);
+                if (image->isEmpty())
+                {
+                    continue;
+                }
+
+                auto size = getEmoteSize(emote.ptr, image) * overallScale;
+                images.push_back(std::move(image));
+                individualSizes.push_back(size);
+                largestSize.setWidth(
+                    std::max(largestSize.width(), size.width()));
+                largestSize.setHeight(
+                    std::max(largestSize.height(), size.height()));
+            }
+            if (images.empty())
+            {
+                return;
             }
 
             container.addElement(this->makeImageLayoutElement(
@@ -377,23 +437,6 @@ void LayeredEmoteElement::addToContainer(MessageLayoutContainer &container,
             }
         }
     }
-}
-
-std::vector<ImagePtr> LayeredEmoteElement::getLoadedImages(float scale)
-{
-    std::vector<ImagePtr> res;
-    res.reserve(this->emotes_.size());
-
-    for (const auto &emote : this->emotes_)
-    {
-        auto image = emote.ptr->images.getImageOrLoaded(scale);
-        if (image->isEmpty())
-        {
-            continue;
-        }
-        res.push_back(image);
-    }
-    return res;
 }
 
 MessageLayoutElement *LayeredEmoteElement::makeImageLayoutElement(
