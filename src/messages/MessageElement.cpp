@@ -38,19 +38,21 @@ using namespace literals;
 
 namespace {
 
-// Computes the bounding box for the given vector of images
-QSizeF getBoundingBoxSize(const std::vector<ImagePtr> &images)
-{
-    qreal width = 0;
-    qreal height = 0;
-    for (const auto &img : images)
-    {
-        QSizeF s = img->size();
-        width = std::max(width, s.width());
-        height = std::max(height, s.height());
-    }
+constexpr qreal MAX_EMOTE_HEIGHT = 28.0;
+constexpr qreal PORTRAIT_HEIGHT_RATIO = 1.2;
 
-    return {width, height};
+QSizeF getEmoteSize(const EmotePtr &emote, const ImagePtr &image)
+{
+    auto size = image->size();
+    if (emote->isSevenTV && getSettings()->limitSevenTVEmoteHeight)
+    {
+        if (size.height() > MAX_EMOTE_HEIGHT &&
+            size.height() < size.width() * PORTRAIT_HEIGHT_RATIO)
+        {
+            size *= MAX_EMOTE_HEIGHT / size.height();
+        }
+    }
+    return size;
 }
 
 }  // namespace
@@ -259,7 +261,8 @@ void EmoteElement::addToContainer(MessageLayoutContainer &container,
         {
             auto emoteScale = getSettings()->emoteScale.getValue();
 
-            auto size = image->size() * container.getScale() * emoteScale;
+            auto size = getEmoteSize(this->emote_, image) *
+                        container.getScale() * emoteScale;
 
             container.addElement(this->makeImageLayoutElement(image, size));
             return;
@@ -347,21 +350,34 @@ void LayeredEmoteElement::addToContainer(MessageLayoutContainer &container,
     {
         if (ctx.flags.has(MessageElementFlag::EmoteImage))
         {
-            auto images = this->getLoadedImages(container.getImageScale());
-            if (images.empty())
-            {
-                return;
-            }
-
             auto emoteScale = getSettings()->emoteScale.getValue();
             float overallScale = emoteScale * container.getScale();
 
-            auto largestSize = getBoundingBoxSize(images) * overallScale;
+            std::vector<ImagePtr> images;
+            images.reserve(this->emotes_.size());
             std::vector<QSizeF> individualSizes;
             individualSizes.reserve(this->emotes_.size());
-            for (const auto &img : images)
+            QSizeF largestSize;
+            for (const auto &emote : this->emotes_)
             {
-                individualSizes.push_back(img->size() * overallScale);
+                auto image = emote.ptr->images.getImageOrLoaded(
+                    container.getImageScale());
+                if (image->isEmpty())
+                {
+                    continue;
+                }
+
+                auto size = getEmoteSize(emote.ptr, image) * overallScale;
+                images.push_back(std::move(image));
+                individualSizes.push_back(size);
+                largestSize.setWidth(
+                    std::max(largestSize.width(), size.width()));
+                largestSize.setHeight(
+                    std::max(largestSize.height(), size.height()));
+            }
+            if (images.empty())
+            {
+                return;
             }
 
             container.addElement(this->makeImageLayoutElement(
@@ -377,23 +393,6 @@ void LayeredEmoteElement::addToContainer(MessageLayoutContainer &container,
             }
         }
     }
-}
-
-std::vector<ImagePtr> LayeredEmoteElement::getLoadedImages(float scale)
-{
-    std::vector<ImagePtr> res;
-    res.reserve(this->emotes_.size());
-
-    for (const auto &emote : this->emotes_)
-    {
-        auto image = emote.ptr->images.getImageOrLoaded(scale);
-        if (image->isEmpty())
-        {
-            continue;
-        }
-        res.push_back(image);
-    }
-    return res;
 }
 
 MessageLayoutElement *LayeredEmoteElement::makeImageLayoutElement(

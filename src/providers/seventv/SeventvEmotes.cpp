@@ -116,6 +116,7 @@ CreateEmoteResult createEmote(const QJsonObject &activeEmote,
         emoteId,
         author,
         makeConditionedOptional(aliasedName, baseEmoteName),
+        true,
     });
 
     return {emote, emoteId, emoteName, !emote.images.getImage1()->isEmpty()};
@@ -147,7 +148,8 @@ EmotePtr createUpdatedEmote(const EmotePtr &oldEmote,
              : createAliasedTooltip(dispatch.emoteName, baseName.string,
                                     oldEmote->author.string, false),
          oldEmote->homePage, oldEmote->zeroWidth, oldEmote->id,
-         oldEmote->author, makeConditionedOptional(!toNonAliased, baseName)}));
+         oldEmote->author, makeConditionedOptional(!toNonAliased, baseName),
+         oldEmote->isSevenTV}));
     return emote;
 }
 

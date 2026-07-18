@@ -571,7 +571,6 @@ private:
 
     QString getCopyString() const;
     void updateTooltips();
-    std::vector<ImagePtr> getLoadedImages(float scale);
 
     std::vector<Emote> emotes_;
     std::vector<QString> emoteTooltips_;
