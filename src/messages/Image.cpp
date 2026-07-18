@@ -197,14 +197,29 @@ std::optional<QPixmap> Frames::first() const
     return this->items_.front().image;
 }
 
-QList<Frame> readFrames(QImageReader &reader, const Url &url)
+QList<Frame> readFrames(QImageReader &reader, const Url &url, QSize targetSize)
 {
     QList<Frame> frames;
     frames.reserve(reader.imageCount());
 
     for (int index = 0; index < reader.imageCount(); ++index)
     {
-        auto pixmap = QPixmap::fromImageReader(&reader);
+        QPixmap pixmap;
+        if (targetSize.isValid())
+        {
+            auto image = reader.read();
+            if (!image.isNull() && image.size() != targetSize)
+            {
+                image = image.scaled(targetSize, Qt::IgnoreAspectRatio,
+                                     Qt::SmoothTransformation);
+            }
+            pixmap = QPixmap::fromImage(std::move(image));
+        }
+        else
+        {
+            pixmap = QPixmap::fromImageReader(&reader);
+        }
+
         if (!pixmap.isNull())
         {
             // It seems that browsers have special logic for fast animations.
@@ -329,6 +344,27 @@ ImagePtr Image::fromUrl(const Url &url, qreal scale, QSize expectedSize)
     return shared;
 }
 
+ImagePtr Image::fromUrlResized(const Url &url, QSize targetSize, qreal scale)
+{
+    using key_t = std::tuple<Url, int, int>;
+    static std::unordered_map<key_t, std::weak_ptr<Image>, boost::hash<key_t>>
+        cache;
+    static std::mutex mutex;
+
+    std::lock_guard<std::mutex> lock(mutex);
+
+    auto key = std::make_tuple(url, targetSize.width(), targetSize.height());
+    auto shared = cache[key].lock();
+
+    if (!shared)
+    {
+        cache[key] = shared =
+            ImagePtr(new Image(url, scale, targetSize, std::move(targetSize)));
+    }
+
+    return shared;
+}
+
 ImagePtr Image::fromResourcePixmap(const QPixmap &pixmap, qreal scale)
 {
     using key_t = std::pair<const QPixmap *, qreal>;
@@ -381,6 +417,16 @@ Image::Image(const Url &url, qreal scale, QSize expectedSize)
     , scale_(scale)
     , expectedSize_(expectedSize.isValid() ? expectedSize
                                            : (QSize(16, 16) * scale))
+    , shouldLoad_(true)
+    , frames_(std::make_unique<detail::Frames>())
+{
+}
+
+Image::Image(const Url &url, qreal scale, QSize expectedSize, QSize resizedSize)
+    : url_(url)
+    , scale_(scale)
+    , expectedSize_(expectedSize)
+    , resizedSize_(std::move(resizedSize))
     , shouldLoad_(true)
     , frames_(std::make_unique<detail::Frames>())
 {
@@ -591,7 +637,8 @@ void Image::actuallyLoad()
                 return;
             }
 
-            auto parsed = detail::readFrames(reader, shared->url());
+            auto parsed =
+                detail::readFrames(reader, shared->url(), shared->resizedSize_);
 
             assignFrames(shared, parsed);
         })

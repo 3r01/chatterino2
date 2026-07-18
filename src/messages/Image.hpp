@@ -63,7 +63,8 @@ private:
     pajlada::Signals::Connection gifTimerConnection_;
 };
 
-QList<Frame> readFrames(QImageReader &reader, const Url &url);
+QList<Frame> readFrames(QImageReader &reader, const Url &url,
+                        QSize targetSize = {});
 void assignFrames(std::weak_ptr<Image> weak, QList<Frame> parsed);
 
 }  // namespace chatterino::detail
@@ -90,6 +91,8 @@ public:
 
     static ImagePtr fromUrl(const Url &url, qreal scale = 1,
                             QSize expectedSize = {});
+    static ImagePtr fromUrlResized(const Url &url, QSize targetSize,
+                                   qreal scale);
     static ImagePtr fromResourcePixmap(const QPixmap &pixmap, qreal scale = 1);
     static ImagePtr getEmpty();
 
@@ -110,6 +113,7 @@ public:
 private:
     Image();
     Image(const Url &url, qreal scale, QSize expectedSize);
+    Image(const Url &url, qreal scale, QSize expectedSize, QSize resizedSize);
     Image(qreal scale);
 
     void setPixmap(const QPixmap &pixmap);
@@ -124,6 +128,7 @@ private:
     /// just an estimation and provided to avoid (large) layout shifts when
     /// loading images.
     const QSize expectedSize_{16, 16};
+    const QSize resizedSize_{};
     std::atomic_bool empty_{false};
 
     bool shouldLoad_{false};

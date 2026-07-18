@@ -30,6 +30,7 @@ struct Emote {
      * the original (base) name of the emote.
      */
     std::optional<EmoteName> baseName;
+    bool isSevenTV{};
 
     // FOURTF: no solution yet, to be refactored later
     const QString &getCopyString() const
