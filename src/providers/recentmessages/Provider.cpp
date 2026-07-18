@@ -51,11 +51,11 @@ bool Provider::isValid() const
 std::vector<Provider> defaultProviders()
 {
     return {
+        {"https://rm.iore.tv/api/%1", true, "iore"},
         {"https://recent-messages.robotty.de/api/v2/recent-messages/%1", true,
          "robotty"},
         {"https://recentmessages.ivr.fi/api/v2/recent-messages/%1", true,
          "ivr"},
-        {"https://rm.iore.tv/api/%1", true, "iore"},
         {"https://recent-messages.zneix.eu/api/v2/recent-messages/%1", true,
          "zneix"},
         {"https://rm.lilb.dev/api/v2/recent-messages/%1", true, "lilb"},

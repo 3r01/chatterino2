@@ -1,0 +1,407 @@
+---
+name: Sync and release 3r01
+
+on:
+  push:
+    branches:
+      - 3r01
+  schedule:
+    - cron: "23 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: Build a release even when upstream has not changed
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: 3r01-sync-and-release
+  cancel-in-progress: false
+
+env:
+  CONAN_VERSION: 2.28.1
+  HTTPBOX_TAG: v0.2.1
+  QT_QPA_PLATFORM: minimal
+  QT_VERSION: 6.8.3
+  TWITCH_PUBSUB_SERVER_TAG: v1.0.12
+
+jobs:
+  prepare:
+    name: Merge upstream into a candidate
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.prepare.outputs.base_sha }}
+      candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}
+      should_build: ${{ steps.prepare.outputs.should_build }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: 3r01
+
+      - name: Merge current Chatterino upstream
+        id: prepare
+        shell: bash
+        env:
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release }}
+        run: |
+          set -euo pipefail
+          git config user.name "3r01 release automation"
+          git config user.email "203520021+3r01@users.noreply.github.com"
+          git remote add chatterino-upstream https://github.com/Chatterino/chatterino2.git
+          git fetch chatterino-upstream master
+
+          base_sha=$(git rev-parse HEAD)
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+
+          if ! git merge --no-edit chatterino-upstream/master; then
+            git merge --abort || true
+            echo "Upstream cannot currently be merged into 3r01 without conflicts." >&2
+            exit 1
+          fi
+
+          candidate_sha=$(git rev-parse HEAD)
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
+          should_build=false
+          if [[ "$candidate_sha" != "$base_sha" || "${GITHUB_EVENT_NAME}" == "push" || "$FORCE_RELEASE" == "true" ]]; then
+            should_build=true
+          fi
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+
+          base_version=$(sed -nE 's/^[[:space:]]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt | head -n1)
+          test -n "$base_version"
+          version="${base_version}-3r01-build.${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [[ "$should_build" == "true" ]]; then
+            git push --force origin HEAD:refs/heads/automation/3r01-candidate
+          fi
+
+  build-and-test:
+    name: Build and test Windows release
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: automation/3r01-candidate
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          cache: true
+          cache-key-prefix: ${{ runner.os }}-3r01-QtCache-${{ env.QT_VERSION }}
+          modules: qtimageformats
+          version: ${{ env.QT_VERSION }}
+
+      - name: Enable Developer Command Prompt
+        uses: Chatterino/msvc-dev-cmd@v2.0.5
+
+      - name: Setup sccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          variant: sccache
+          save: true
+          key: 3r01-windows-${{ env.QT_VERSION }}
+          restore-keys: |
+            3r01-windows-
+
+      - name: Cache Conan packages
+        uses: actions/cache@v6
+        with:
+          key: ${{ runner.os }}-3r01-conan-${{ hashFiles('**/conanfile.py') }}-Qt6
+          path: ~/.conan2/
+          restore-keys: |
+            ${{ runner.os }}-3r01-conan-
+
+      - name: Install Conan
+        shell: pwsh
+        run: |
+          python3 -c "import site; import sys; print(f'{site.USER_BASE}\\Python{sys.version_info.major}{sys.version_info.minor}\\Scripts')" >> "$Env:GITHUB_PATH"
+          pip3 install --user "conan==$Env:CONAN_VERSION"
+          conan profile detect -f
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path build
+          Push-Location build
+          conan install .. `
+              -s build_type=RelWithDebInfo `
+              -c tools.cmake.cmaketoolchain:generator="NMake Makefiles" `
+              -b missing `
+              --output-folder=. `
+              -o with_openssl3=True
+          Pop-Location
+
+      - name: Configure and build application and tests
+        shell: pwsh
+        env:
+          CHATTERINO_REQUIRE_CLEAN_GIT: On
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          Push-Location build
+          cmake `
+              -G"NMake Makefiles" `
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+              -DCMAKE_TOOLCHAIN_FILE="conan_toolchain.cmake" `
+              -DBUILD_TESTS=On `
+              -DBUILD_WITH_CRASHPAD=On `
+              -DCHATTERINO_3R01_BUILD=On `
+              "-DCHATTERINO_3R01_BUILD_NUMBER=${{ github.run_number }}" `
+              -DCHATTERINO_SPELLCHECK=On `
+              -DFORCE_JSON_GENERATION=Off `
+              -DUSE_PRECOMPILED_HEADERS=On `
+              ..
+          $Env:CL = "/MP"
+          nmake /S /NOLOGO
+          nmake /S /NOLOGO chatterino-crash-handler
+          Pop-Location
+
+      - name: Install test services
+        shell: pwsh
+        run: |
+          $crt = Get-ChildItem "$Env:VCToolsRedistDir\onecore\x64" -Filter "*.CRT" | Select-Object -First 1
+          if (-not $crt) {
+              throw "The Visual C++ test runtime could not be located"
+          }
+          Copy-Item "$($crt.FullName)\*" build\bin
+
+          Invoke-WebRequest `
+              -Uri "https://github.com/Chatterino/httpbox/releases/download/$Env:HTTPBOX_TAG/httpbox-x86_64-pc-windows-msvc.zip" `
+              -OutFile httpbox.zip
+          Expand-Archive httpbox.zip -DestinationPath httpbox
+
+          Invoke-WebRequest `
+              -Uri "https://github.com/Chatterino/twitch-pubsub-server-test/releases/download/$Env:TWITCH_PUBSUB_SERVER_TAG/server-$Env:TWITCH_PUBSUB_SERVER_TAG-windows-amd64.zip" `
+              -OutFile pubsub-server.zip
+          Expand-Archive pubsub-server.zip -DestinationPath pubsub-server-test
+
+      - name: Run tests
+        shell: pwsh
+        run: |
+          ..\httpbox\httpbox.exe --port 9051 &
+          Set-Location ..\pubsub-server-test
+          .\server.exe 127.0.0.1:9050 127.0.0.1:9052 &
+          Set-Location ..\build
+          ctest --repeat until-pass:4 --output-on-failure
+        working-directory: build
+
+      - name: Prepare verified Windows application
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path package\Chatterino2
+          windeployqt build\bin\chatterino.exe `
+              --release `
+              --no-compiler-runtime `
+              --no-translations `
+              --no-opengl-sw `
+              --dir package\Chatterino2
+          Copy-Item build\bin\chatterino.exe package\Chatterino2
+          New-Item -ItemType Directory -Force -Path package\Chatterino2\crashpad
+          Copy-Item build\bin\crashpad\crashpad-handler.exe package\Chatterino2\crashpad
+          .\.CI\deploy-crt.ps1 package\Chatterino2
+
+      - name: Upload verified Windows application
+        uses: actions/upload-artifact@v7
+        with:
+          name: 3r01-windows-app-${{ needs.prepare.outputs.version }}
+          path: package/Chatterino2
+          if-no-files-found: error
+
+      - name: Clean Conan cache
+        if: always()
+        shell: bash
+        run: conan cache clean --source --build --download "*"
+
+  package:
+    name: Package Windows release
+    needs:
+      - prepare
+      - build-and-test
+    if: needs.prepare.outputs.should_build == 'true' && needs.build-and-test.result == 'success'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          ref: automation/3r01-candidate
+
+      - name: Mark the candidate with an annotated release tag
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: git tag -a "v$Env:RELEASE_VERSION" -m "3r01 $Env:RELEASE_VERSION" HEAD
+
+      - name: Enable Developer Command Prompt
+        uses: Chatterino/msvc-dev-cmd@v2.0.5
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: 3r01-windows-app-${{ needs.prepare.outputs.version }}
+          path: package/Chatterino2
+
+      - name: Package Windows installer and portable build
+        shell: pwsh
+        run: |
+          $officialRelease = Invoke-RestMethod `
+              -Headers @{ "User-Agent" = "3r01-release-workflow" } `
+              -Uri "https://api.github.com/repos/Chatterino/chatterino2/releases/latest"
+          $portableAsset = $officialRelease.assets | Where-Object { $_.name -eq "Chatterino.Portable.zip" } | Select-Object -First 1
+          if (-not $portableAsset) {
+              throw "The official portable release did not contain Chatterino.Portable.zip"
+          }
+          Invoke-WebRequest -Uri $portableAsset.browser_download_url -OutFile official-portable.zip
+          Expand-Archive official-portable.zip -DestinationPath official-portable
+          $updater = Get-ChildItem official-portable -Recurse -Filter ChatterinoUpdater.exe | Select-Object -First 1
+          if (-not $updater) {
+              throw "The official portable release did not contain ChatterinoUpdater.exe"
+          }
+          Copy-Item $updater.Directory.FullName package\Chatterino2\updater.1 -Recurse
+
+          choco install innosetup --no-progress -y
+          Push-Location package
+          & ..\.CI\build-installer.ps1
+          Move-Item Chatterino.Installer.exe Chatterino.3r01.Installer.exe
+          Set-Content Chatterino2\modes "portable" -Encoding ascii
+          7z a Chatterino.3r01.Portable.zip Chatterino2
+          Pop-Location
+
+          $assets = @(
+              "package\Chatterino.3r01.Installer.exe",
+              "package\Chatterino.3r01.Portable.zip"
+          )
+          $checksums = foreach ($asset in $assets) {
+              $hash = Get-FileHash -Algorithm SHA256 $asset
+              "$($hash.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($asset))"
+          }
+          $checksums | Set-Content package\sha256-checksums.txt -Encoding ascii
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: 3r01-release-${{ needs.prepare.outputs.version }}
+          path: |
+            package/Chatterino.3r01.Installer.exe
+            package/Chatterino.3r01.Portable.zip
+            package/sha256-checksums.txt
+          if-no-files-found: error
+
+  promote-and-release:
+    name: Promote candidate and publish release
+    needs:
+      - prepare
+      - build-and-test
+      - package
+    if: needs.prepare.outputs.should_build == 'true' && needs.package.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: 3r01
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: 3r01-release-${{ needs.prepare.outputs.version }}
+          path: release-assets
+
+      - name: Promote the verified candidate
+        shell: bash
+        env:
+          BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin 3r01 automation/3r01-candidate
+          current_sha=$(git rev-parse origin/3r01)
+          if [[ "$current_sha" != "$BASE_SHA" ]]; then
+            echo "3r01 changed during verification; refusing to overwrite it." >&2
+            exit 1
+          fi
+          git push origin "$CANDIDATE_SHA:refs/heads/3r01"
+
+      - name: Create update manifest
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          release_url="https://github.com/3r01/chatterino2/releases/tag/${tag}"
+          asset_root="https://github.com/3r01/chatterino2/releases/download/${tag}"
+          jq -n \
+            --arg version "${RELEASE_VERSION%%-3r01-build.*}" \
+            --argjson fork_build "${{ github.run_number }}" \
+            --arg updateexe "${asset_root}/Chatterino.3r01.Installer.exe" \
+            --arg portable_download "${asset_root}/Chatterino.3r01.Portable.zip" \
+            --arg updateguide "$release_url" \
+            '{version: $version, "3r01_build": $fork_build, updateexe: $updateexe, portable_download: $portable_download, updateguide: $updateguide}' \
+            > release-assets/3r01-update.json
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          gh release create "$tag" release-assets/* \
+            --target "$CANDIDATE_SHA" \
+            --title "Chatterino 3r01 ${RELEASE_VERSION}" \
+            --notes "Automated 3r01 build containing the latest successfully merged Chatterino upstream plus the retained 3r01 features." \
+            --latest
+
+      - name: Close resolved automation failure reports
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue list --state open --search '"3r01 automatic update failed" in:title' --json number --jq '.[].number' |
+            while read -r issue; do
+              gh issue close "$issue" --comment "A later automatic merge, build, test, and release completed successfully."
+            done
+
+  report-failure:
+    name: Report automation failure
+    needs:
+      - prepare
+      - build-and-test
+      - package
+      - promote-and-release
+    if: >-
+      ${{ always() &&
+          (needs.prepare.result == 'failure' ||
+           needs.build-and-test.result == 'failure' ||
+           needs.package.result == 'failure' ||
+           needs.promote-and-release.result == 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or update failure issue
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="3r01 automatic update failed"
+          body="The automatic upstream merge, build, test, or release failed. The 3r01 branch and latest working release were not overwritten. Run details: ${RUN_URL}"
+          issue=$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

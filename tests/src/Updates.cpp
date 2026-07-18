@@ -41,6 +41,23 @@ TEST(Updates, MustNotBeDowngrade)
         << "2.4.5 must not be a downgrade of 2.4.5-beta";
 }
 
+#ifdef CHATTERINO_3R01_BUILD
+TEST(Updates, Uses3r01UpdateEndpoint)
+{
+    EXPECT_EQ(Updates::updateEndpoint("win", "stable"),
+              "https://github.com/3r01/chatterino2/releases/latest/download/"
+              "3r01-update.json");
+}
+
+TEST(Updates, Compares3r01BuildsAfterUpstreamVersion)
+{
+    EXPECT_TRUE(Updates::isForkUpdateAvailable("2.5.6", 1, "2.5.5", 20));
+    EXPECT_TRUE(Updates::isForkUpdateAvailable("2.5.5", 21, "2.5.5", 20));
+    EXPECT_FALSE(Updates::isForkUpdateAvailable("2.5.5", 20, "2.5.5", 20));
+    EXPECT_FALSE(Updates::isForkUpdateAvailable("2.5.5", 19, "2.5.5", 20));
+}
+#endif
+
 TEST(Updates, ValidateCurrentVersion)
 {
     EXPECT_NO_THROW([[maybe_unused]] auto v = semver::from_string(

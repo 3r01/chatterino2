@@ -54,7 +54,11 @@ Updates::Updates(const Modes &modes_, const Paths &paths_, Settings &settings)
     : paths(paths_)
     , modes(modes_)
     , currentVersion_(CHATTERINO_VERSION)
+#ifdef CHATTERINO_3R01_BUILD
+    , updateGuideLink_("https://github.com/3r01/chatterino2/releases/latest")
+#else
     , updateGuideLink_("https://chatterino.com")
+#endif
 {
     qCDebug(chatterinoUpdate) << "init UpdateManager";
 
@@ -85,6 +89,32 @@ bool Updates::isDowngradeOf(const QString &online, const QString &current)
     }
 
     return onlineVersion < currentVersion;
+}
+
+bool Updates::isForkUpdateAvailable(const QString &onlineVersion,
+                                    int onlineBuild,
+                                    const QString &currentVersion,
+                                    int currentBuild)
+{
+    if (onlineVersion != currentVersion)
+    {
+        return true;
+    }
+    return onlineBuild > currentBuild;
+}
+
+QString Updates::updateEndpoint(const QString &os, const QString &branch)
+{
+#ifdef CHATTERINO_3R01_BUILD
+    Q_UNUSED(os)
+    Q_UNUSED(branch)
+    return QStringLiteral(
+        "https://github.com/3r01/chatterino2/releases/latest/download/"
+        "3r01-update.json");
+#else
+    return "https://notitia.chatterino.com/version/chatterino/" % os % "/" %
+           branch;
+#endif
 }
 
 void Updates::deleteOldFiles()
@@ -125,12 +155,14 @@ void Updates::installUpdates()
         return;
     }
 
+#ifndef CHATTERINO_3R01_BUILD
     if (Version::instance().isNightly())
     {
         // Since Nightly builds can be installed in many different ways, we ask the user to download the update manually.
         QDesktopServices::openUrl(QUrl("https://chatterino.com/#downloads"));
         return;
     }
+#endif
 
 #ifdef Q_OS_MACOS
     QMessageBox *box = new QMessageBox(
@@ -331,8 +363,7 @@ void Updates::checkForUpdates()
         return;
     }
 
-    QString url = "https://notitia.chatterino.com/version/chatterino/" %
-                  CHATTERINO_OS % "/" % currentBranch();
+    const auto url = Updates::updateEndpoint(CHATTERINO_OS, currentBranch());
 
     NetworkRequest(url)
         .timeout(60000)
@@ -389,7 +420,25 @@ void Updates::checkForUpdates()
             this->onlineVersion_ = version.toString();
 
             /// Update available :)
-            if (this->currentVersion_ != this->onlineVersion_)
+#ifdef CHATTERINO_3R01_BUILD
+            const auto forkBuild = object["3r01_build"];
+            if (!forkBuild.isDouble() || forkBuild.toInt(-1) < 0)
+            {
+                this->setStatus_(SearchFailed);
+                qCDebug(chatterinoUpdate)
+                    << "error checking 3r01 version - missing '3r01_build'"
+                    << object;
+                return;
+            }
+            this->onlineForkBuild_ = forkBuild.toInt();
+            const auto updateAvailable = Updates::isForkUpdateAvailable(
+                this->onlineVersion_, this->onlineForkBuild_,
+                this->currentVersion_, CHATTERINO_3R01_BUILD_NUMBER);
+#else
+            const auto updateAvailable =
+                this->currentVersion_ != this->onlineVersion_;
+#endif
+            if (updateAvailable)
             {
                 this->setStatus_(UpdateAvailable);
                 this->isDowngrade_ = Updates::isDowngradeOf(
@@ -455,8 +504,14 @@ bool Updates::isDowngrade() const
 
 QString Updates::buildUpdateAvailableText() const
 {
+#ifdef CHATTERINO_3R01_BUILD
+    const auto onlineLabel =
+        QString("%1 (3r01 build %2)")
+            .arg(this->getOnlineVersion())
+            .arg(this->onlineForkBuild_);
+#endif
+#ifndef CHATTERINO_3R01_BUILD
     const auto &version = Version::instance();
-
     if (version.isNightly())
     {
         // Since Nightly builds can be installed in many different ways, we ask the user to download the update manually.
@@ -473,6 +528,7 @@ QString Updates::buildUpdateAvailableText() const
                        "Chatterino.com to download the new update?")
             .arg(this->getOnlineVersion());
     }
+#endif
 
     if (this->isDowngrade())
     {
@@ -483,9 +539,15 @@ QString Updates::buildUpdateAvailableText() const
             .arg(this->getOnlineVersion(), this->getCurrentVersion());
     }
 
+#ifdef CHATTERINO_3R01_BUILD
+    return QString("An update (%1) is available.\n\nDo you want to "
+                   "download and install it?")
+        .arg(onlineLabel);
+#else
     return QString("An update (%1) is available.\n\nDo you want to "
                    "download and install it?")
         .arg(this->getOnlineVersion());
+#endif
 }
 
 void Updates::setStatus_(Status status)

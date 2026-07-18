@@ -43,6 +43,12 @@ public:
     };
 
     static bool isDowngradeOf(const QString &online, const QString &current);
+    static bool isForkUpdateAvailable(const QString &onlineVersion,
+                                      int onlineBuild,
+                                      const QString &currentVersion,
+                                      int currentBuild);
+
+    static QString updateEndpoint(const QString &os, const QString &branch);
 
     /**
      * @brief Delete old files that belong to the update process
@@ -71,6 +77,10 @@ private:
     QString onlineVersion_;
     Status status_ = None;
     bool isDowngrade_{};
+
+#ifdef CHATTERINO_3R01_BUILD
+    int onlineForkBuild_{};
+#endif
 
     QString updateExe_;
     QString updatePortable_;
