@@ -131,7 +131,21 @@ std::optional<QStringList> detectBrailleArtRows(const QString &content)
         }
         else if (!rows.isEmpty())
         {
-            captionStart = index;
+            const auto lastRowContainsOrdinaryText =
+                std::ranges::any_of(rows.back(), [](QChar character) {
+                    const auto codePoint = character.unicode();
+                    return codePoint < 0x2800 || codePoint > 0x28FF;
+                });
+            if (lastRowContainsOrdinaryText)
+            {
+                rows.back().append(u' ');
+                rows.back().append(
+                    QStringList(segments.sliced(index)).join(u' '));
+            }
+            else
+            {
+                captionStart = index;
+            }
             break;
         }
     }
