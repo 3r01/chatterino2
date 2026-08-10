@@ -317,6 +317,30 @@ protected:
     FontStyle style_;
 };
 
+// Reconstructs space-separated rows in strongly detected Braille art and
+// lays them out at Twitch chat width.
+class BrailleArtElement : public MessageElement
+{
+public:
+    static constexpr std::string_view TYPE = "braille-art";
+
+    BrailleArtElement(QStringList rows, MessageElementFlags flags,
+                      const MessageColor &color = MessageColor::Text,
+                      FontStyle style = FontStyle::ChatMedium);
+
+    void addToContainer(MessageLayoutContainer &container,
+                        const MessageLayoutContext &ctx) override;
+
+    QJsonObject toJson() const override;
+    std::string_view type() const override;
+    std::unique_ptr<MessageElement> clone() const override;
+
+private:
+    QStringList rows_;
+    MessageColor color_;
+    FontStyle style_;
+};
+
 // contains a text that will be truncated to one line
 class SingleLineTextElement : public MessageElement
 {
