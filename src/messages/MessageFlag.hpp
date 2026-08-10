@@ -80,6 +80,7 @@ enum class MessageFlag : std::int64_t {
     Announcement = (1LL << 44),
     /// Notifications that do not yet have special handling/categorization
     UncategorizedNotification = (1LL << 45),
+    AsciiArt = (1LL << 46),
 };
 using MessageFlags = FlagsEnum<MessageFlag>;
 

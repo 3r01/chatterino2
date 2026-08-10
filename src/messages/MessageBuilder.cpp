@@ -15,6 +15,7 @@
 #include "controllers/ignores/IgnoreController.hpp"
 #include "controllers/ignores/IgnorePhrase.hpp"
 #include "controllers/userdata/UserDataController.hpp"
+#include "messages/AsciiArt.hpp"
 #include "messages/Emote.hpp"
 #include "messages/Image.hpp"
 #include "messages/Message.hpp"
@@ -78,76 +79,6 @@ const QString regexHelpString("(\\w+)[.,!?;:]*?$");
 
 // matches a mention with punctuation at the end, like "@username," or "@username!!!" where capture group would return "username"
 const QRegularExpression mentionRegex("^@" + regexHelpString);
-
-std::optional<QStringList> detectBrailleArtRows(const QString &content)
-{
-    constexpr auto MIN_BRAILLE_CELLS = 40;
-
-    // Some chat messages are prefixed with invisible formatting characters.
-    qsizetype textStart = 0;
-    while (textStart < content.size())
-    {
-        const auto codePoint = content[textStart].unicode();
-        if (codePoint != 0x034F && (codePoint < 0x200B || codePoint > 0x200D) &&
-            codePoint != 0xFEFF)
-        {
-            break;
-        }
-        ++textStart;
-    }
-    if (textStart != 0)
-    {
-        while (textStart < content.size() && content[textStart].isSpace())
-        {
-            ++textStart;
-        }
-    }
-    const auto text = content.sliced(textStart);
-
-    const auto characters = text.toUcs4();
-    const auto brailleCells =
-        std::ranges::count_if(characters, [](char32_t codePoint) {
-            return codePoint >= 0x2800 && codePoint <= 0x28FF;
-        });
-    if (brailleCells < MIN_BRAILLE_CELLS ||
-        brailleCells * 100 < characters.size() * 45)
-    {
-        return std::nullopt;
-    }
-
-    const auto segments = text.split(u' ', Qt::SkipEmptyParts);
-    QStringList rows;
-    qsizetype captionStart = -1;
-    for (qsizetype index = 0; index < segments.size(); ++index)
-    {
-        const auto hasBraille =
-            std::ranges::any_of(segments[index], [](QChar character) {
-                const auto codePoint = character.unicode();
-                return codePoint >= 0x2800 && codePoint <= 0x28FF;
-            });
-        if (hasBraille)
-        {
-            rows.push_back(segments[index]);
-        }
-        else if (!rows.isEmpty())
-        {
-            captionStart = index;
-            break;
-        }
-    }
-
-    if (rows.size() < 3)
-    {
-        return std::nullopt;
-    }
-
-    if (captionStart >= 0)
-    {
-        rows.push_back(QStringList(segments.sliced(captionStart)).join(u' '));
-    }
-
-    return rows;
-}
 
 // if findAllUsernames setting is enabled, matches strings like in the examples above, but without @ symbol at the beginning
 const QRegularExpression allUsernamesMentionRegex("^" + regexHelpString);
@@ -1872,17 +1803,15 @@ std::pair<MessagePtrMut, HighlightAlert> MessageBuilder::makeIrcMessage(
         });
     twitchEmotes.erase(uniqueEmotes.begin(), uniqueEmotes.end());
 
-    if (auto brailleRows = detectBrailleArtRows(content))
+    if (getSettings()->wrapAsciiArt && isAsciiArt(content))
     {
-        builder.emplace<BrailleArtElement>(
-            *brailleRows, MessageElementFlag::Text, builder.textColor_);
+        builder->flags.set(MessageFlag::AsciiArt);
     }
-    else
-    {
-        // words
-        QStringList splits = content.split(' ');
-        builder.addWords(splits, twitchEmotes, textState);
-    }
+
+    // words
+    QStringList splits = content.split(' ');
+
+    builder.addWords(splits, twitchEmotes, textState);
 
     QString stylizedUsername =
         stylizeUsername(builder->loginName, builder.message());
