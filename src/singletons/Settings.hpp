@@ -117,6 +117,7 @@ constexpr std::optional<std::string_view> qmagicenumDisplayName(
 
 struct SettingsArgs {
     bool isTest = false;
+    bool runMigrations = true;
 };
 
 /// Settings which are available for reading and writing on the gui thread.
@@ -881,6 +882,13 @@ private:
             recentmessages::defaultProviders(),
     };
     SignalVector<QString> mutedChannels;
+
+    IntSetting settingsVersion = {
+        "/misc/settingsVersion",
+        0,
+    };
+
+    void migrate(bool isTest);
 
 public:
     SignalVector<HighlightPhrase> highlightedMessages;

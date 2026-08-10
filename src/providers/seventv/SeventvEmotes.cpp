@@ -107,6 +107,14 @@ CreateEmoteResult createEmote(const QJsonObject &activeEmote,
             : createTooltip(emoteName.string, author.string, isGlobal);
     auto imageSet = SeventvEmotes::createImageSet(emoteData, false);
 
+    const auto tagsArray = emoteData["tags"].toArray();
+    QStringList tags;
+    tags.reserve(tagsArray.size());
+    for (const auto tag : tagsArray)
+    {
+        tags.append(tag.toString());
+    }
+
     auto emote = Emote({
         emoteName,
         imageSet,
@@ -116,6 +124,7 @@ CreateEmoteResult createEmote(const QJsonObject &activeEmote,
         emoteId,
         author,
         makeConditionedOptional(aliasedName, baseEmoteName),
+        tags,
         true,
     });
 
@@ -149,7 +158,7 @@ EmotePtr createUpdatedEmote(const EmotePtr &oldEmote,
                                     oldEmote->author.string, false),
          oldEmote->homePage, oldEmote->zeroWidth, oldEmote->id,
          oldEmote->author, makeConditionedOptional(!toNonAliased, baseName),
-         oldEmote->isSevenTV}));
+         oldEmote->tags, oldEmote->isSevenTV}));
     return emote;
 }
 
