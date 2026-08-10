@@ -68,6 +68,8 @@ struct MessageLayoutContainer {
      */
     void breakLine();
 
+    void limitWidthForAsciiArt();
+
     /**
      * Paint the elements in this message
      */
@@ -356,6 +358,7 @@ private:
     qreal spaceWidth_ = 4;
     qreal textLineHeight_ = 0;
     qreal dotdotdotWidth_ = 0;
+    std::optional<qreal> asciiArtWidth_;
     int currentWordId_ = 0;
     bool canAddMessages_ = true;
     bool isCollapsed_ = false;

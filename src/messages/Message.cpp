@@ -116,6 +116,7 @@ std::shared_ptr<Message> Message::clone() const
     cloned->id = this->id;
     cloned->searchText = this->searchText;
     cloned->messageText = this->messageText;
+    cloned->isAsciiArt = this->isAsciiArt;
     cloned->loginName = this->loginName;
     cloned->displayName = this->displayName;
     cloned->localizedName = this->localizedName;
