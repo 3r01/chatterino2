@@ -153,6 +153,10 @@ void MessageLayout::actuallyLayout(const MessageLayoutContext &ctx)
 
     this->container_.beginLayout(ctx.width, this->scale_, this->imageScale_,
                                  messageFlags);
+    if (this->message_->isAsciiArt)
+    {
+        this->container_.limitWidthForAsciiArt();
+    }
 
     for (const auto &element : this->message_->elements)
     {
