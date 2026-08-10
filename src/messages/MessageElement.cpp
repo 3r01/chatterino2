@@ -24,7 +24,6 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
-#include <QTextBoundaryFinder>
 
 #include <memory>
 #include <utility>
@@ -152,12 +151,23 @@ void MessageElement::addFlags(MessageElementFlags flags)
     this->flags_.set(flags);
 }
 
+void MessageElement::setChatArt()
+{
+    this->isChatArt_ = true;
+}
+
+bool MessageElement::isChatArt() const
+{
+    return this->isChatArt_;
+}
+
 void MessageElement::cloneFrom(const MessageElement &source)
 {
     this->link_ = source.link_;
     this->tooltip_ = source.tooltip_;
     this->flags_ = source.flags_;
     this->trailingSpace = source.trailingSpace;
+    this->isChatArt_ = source.isChatArt_;
 }
 
 QJsonObject MessageElement::toJson() const
@@ -1003,131 +1013,6 @@ std::unique_ptr<MessageElement> TextElement::clone() const
         TextElement::CloneConstructorTag{}, this->words_, this->getFlags(),
         this->color_, this->style_);
 
-    elem->cloneFrom(*this);
-    return elem;
-}
-
-BrailleArtElement::BrailleArtElement(QStringList rows,
-                                     MessageElementFlags flags,
-                                     const MessageColor &color, FontStyle style)
-    : MessageElement(flags)
-    , rows_(std::move(rows))
-    , color_(color)
-    , style_(style)
-{
-}
-
-void BrailleArtElement::addToContainer(MessageLayoutContainer &container,
-                                       const MessageLayoutContext &ctx)
-{
-    if (!ctx.flags.hasAny(this->getFlags()))
-    {
-        return;
-    }
-
-    constexpr qreal TWITCH_CHAT_WIDTH = 340.0;
-
-    auto *app = getApp();
-    auto metrics =
-        app->getFonts()->getFontMetrics(this->style_, container.getScale());
-    auto color = this->color_.getColor(ctx.messageColors);
-    app->getThemes()->normalizeColor(color);
-
-    // Give every authored row the same origin. Otherwise the first row would
-    // have less room than the others because it followed badges and username.
-    if (!container.atStartOfLine())
-    {
-        container.breakLine();
-    }
-
-    for (qsizetype rowIndex = 0; rowIndex < this->rows_.size(); ++rowIndex)
-    {
-        const auto &row = this->rows_[rowIndex];
-        const auto wordId = container.nextWordId();
-        qsizetype start = 0;
-
-        while (start < row.size())
-        {
-            const auto availableWidth =
-                std::min(TWITCH_CHAT_WIDTH * container.getScale(),
-                         container.remainingWidth());
-
-            qsizetype end = row.size();
-            auto segmentWidth = metrics.horizontalAdvance(row.sliced(start));
-
-            if (segmentWidth > availableWidth)
-            {
-                QTextBoundaryFinder boundaries(QTextBoundaryFinder::Grapheme,
-                                               row);
-                boundaries.setPosition(start);
-
-                qsizetype lastFittingBoundary = start;
-                qsizetype nextBoundary = start;
-                while ((nextBoundary = boundaries.toNextBoundary()) != -1)
-                {
-                    const auto candidateWidth = metrics.horizontalAdvance(
-                        row.sliced(start, nextBoundary - start));
-                    if (candidateWidth > availableWidth)
-                    {
-                        // Always consume at least one grapheme, even in a view
-                        // too narrow to display it without overflow.
-                        if (lastFittingBoundary == start)
-                        {
-                            lastFittingBoundary = nextBoundary;
-                        }
-                        break;
-                    }
-                    lastFittingBoundary = nextBoundary;
-                }
-
-                end = lastFittingBoundary;
-                segmentWidth =
-                    metrics.horizontalAdvance(row.sliced(start, end - start));
-            }
-
-            auto text = row.sliced(start, end - start);
-            auto *element = new TextLayoutElement(
-                *this, text, QSizeF(segmentWidth, metrics.height()), color,
-                this->style_, container.getScale());
-            const bool finishesAuthoredRow = end == row.size();
-            element->setTrailingSpace(finishesAuthoredRow);
-            element->setText(text);
-            element->setWordId(wordId);
-            container.addElementNoLineBreak(element);
-
-            start = end;
-            if (start < row.size())
-            {
-                container.breakLine();
-            }
-        }
-
-        if (rowIndex + 1 < this->rows_.size())
-        {
-            container.breakLine();
-        }
-    }
-}
-
-QJsonObject BrailleArtElement::toJson() const
-{
-    auto base = MessageElement::toJson();
-    base["type"_L1] = u"BrailleArtElement"_s;
-    base["rows"_L1] = QJsonArray::fromStringList(this->rows_);
-    base["color"_L1] = this->color_.toString();
-    base["style"_L1] = qmagicenum::enumNameString(this->style_);
-    return base;
-}
-
-std::string_view BrailleArtElement::type() const
-{
-    return std::remove_pointer_t<decltype(this)>::TYPE;
-}
-
-std::unique_ptr<MessageElement> BrailleArtElement::clone() const
-{
-    auto elem = std::make_unique<BrailleArtElement>(
-        this->rows_, this->getFlags(), this->color_, this->style_);
     elem->cloneFrom(*this);
     return elem;
 }

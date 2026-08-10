@@ -154,6 +154,7 @@ void MessageLayout::actuallyLayout(const MessageLayoutContext &ctx)
     this->container_.beginLayout(ctx.width, this->scale_, this->imageScale_,
                                  messageFlags);
 
+    bool layingOutChatArt = false;
     for (const auto &element : this->message_->elements)
     {
         if (hideModerated && this->message_->flags.has(MessageFlag::Disabled))
@@ -203,8 +204,22 @@ void MessageLayout::actuallyLayout(const MessageLayoutContext &ctx)
             continue;
         }
 
+        if (element->isChatArt() != layingOutChatArt)
+        {
+            layingOutChatArt = element->isChatArt();
+            if (layingOutChatArt)
+            {
+                this->container_.beginChatArt();
+            }
+            else
+            {
+                this->container_.endChatArt();
+            }
+        }
+
         element->addToContainer(this->container_, ctx);
     }
+    this->container_.endChatArt();
 
     if (this->height_ != this->container_.getHeight())
     {

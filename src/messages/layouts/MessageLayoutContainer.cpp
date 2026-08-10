@@ -28,6 +28,8 @@ using namespace chatterino;
 
 constexpr QMargins MARGIN{8, 4, 8, 4};
 constexpr qreal COMPACT_EMOTES_OFFSET = 4;
+// Target width used to match Twitch's desktop chat layout.
+constexpr qreal TWITCH_CHAT_WIDTH = 340.0;
 
 int maxUncollapsedLines()
 {
@@ -61,6 +63,7 @@ void MessageLayoutContainer::beginLayout(qreal width, float scale,
     this->textLineHeight_ = mediumFontMetrics.height();
     this->spaceWidth_ = mediumFontMetrics.horizontalAdvance(' ');
     this->dotdotdotWidth_ = mediumFontMetrics.horizontalAdvance("...");
+    this->chatArtWidth_.reset();
     this->currentWordId_ = 0;
     this->canAddMessages_ = true;
     this->isCollapsed_ = false;
@@ -230,6 +233,16 @@ void MessageLayoutContainer::breakLine()
     this->height_ = this->currentY_ + int(MARGIN.bottom() * this->scale_);
     this->lineHeight_ = 0;
     this->line_++;
+}
+
+void MessageLayoutContainer::beginChatArt()
+{
+    this->chatArtWidth_ = TWITCH_CHAT_WIDTH * this->scale_;
+}
+
+void MessageLayoutContainer::endChatArt()
+{
+    this->chatArtWidth_.reset();
 }
 
 void MessageLayoutContainer::paintElements(QPainter &painter,
@@ -577,8 +590,13 @@ bool MessageLayoutContainer::fitsInLine(qreal width) const
 
 qreal MessageLayoutContainer::remainingWidth() const
 {
-    return (this->width_ - int(MARGIN.left() * this->scale_) -
-            int(MARGIN.right() * this->scale_) -
+    auto contentWidth = this->width_ - int(MARGIN.left() * this->scale_) -
+                        int(MARGIN.right() * this->scale_);
+    if (this->chatArtWidth_)
+    {
+        contentWidth = std::min(contentWidth, *this->chatArtWidth_);
+    }
+    return (contentWidth -
             (static_cast<int>(this->line_ + 1) == maxUncollapsedLines()
                  ? this->dotdotdotWidth_
                  : 0)) -
