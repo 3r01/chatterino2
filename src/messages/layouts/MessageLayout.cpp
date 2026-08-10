@@ -154,6 +154,7 @@ void MessageLayout::actuallyLayout(const MessageLayoutContext &ctx)
     this->container_.beginLayout(ctx.width, this->scale_, this->imageScale_,
                                  messageFlags);
 
+    bool layingOutAsciiArt = false;
     for (const auto &element : this->message_->elements)
     {
         if (hideModerated && this->message_->flags.has(MessageFlag::Disabled))
@@ -203,8 +204,22 @@ void MessageLayout::actuallyLayout(const MessageLayoutContext &ctx)
             continue;
         }
 
+        if (element->isAsciiArt() != layingOutAsciiArt)
+        {
+            layingOutAsciiArt = element->isAsciiArt();
+            if (layingOutAsciiArt)
+            {
+                this->container_.beginAsciiArt();
+            }
+            else
+            {
+                this->container_.endAsciiArt();
+            }
+        }
+
         element->addToContainer(this->container_, ctx);
     }
+    this->container_.endAsciiArt();
 
     if (this->height_ != this->container_.getHeight())
     {

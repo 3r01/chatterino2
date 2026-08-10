@@ -185,6 +185,9 @@ public:
     MessageElementFlags getFlags() const;
     void addFlags(MessageElementFlags flags);
 
+    void setAsciiArt();
+    bool isAsciiArt() const;
+
     virtual void addToContainer(MessageLayoutContainer &container,
                                 const MessageLayoutContext &ctx) = 0;
 
@@ -210,6 +213,8 @@ private:
     Link link_;
     QString tooltip_;
     MessageElementFlags flags_;
+    // Internal layout metadata; this doesn't change the element's semantics.
+    bool isAsciiArt_{};
 };
 
 // contains a simple image
@@ -313,30 +318,6 @@ public:
 protected:
     QStringList words_;
 
-    MessageColor color_;
-    FontStyle style_;
-};
-
-// Reconstructs space-separated rows in strongly detected Braille art and
-// lays them out at Twitch chat width.
-class BrailleArtElement : public MessageElement
-{
-public:
-    static constexpr std::string_view TYPE = "braille-art";
-
-    BrailleArtElement(QStringList rows, MessageElementFlags flags,
-                      const MessageColor &color = MessageColor::Text,
-                      FontStyle style = FontStyle::ChatMedium);
-
-    void addToContainer(MessageLayoutContainer &container,
-                        const MessageLayoutContext &ctx) override;
-
-    QJsonObject toJson() const override;
-    std::string_view type() const override;
-    std::unique_ptr<MessageElement> clone() const override;
-
-private:
-    QStringList rows_;
     MessageColor color_;
     FontStyle style_;
 };
