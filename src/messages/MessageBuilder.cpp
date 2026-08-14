@@ -2358,9 +2358,17 @@ void MessageBuilder::appendUsername(Communi::TagsRef tags,
 
     if (args.isSentWhisper)
     {
-        // TODO(pajlada): Re-implement
-        // userDisplayString +=
-        // IrcManager::instance().getUser().getUserName();
+        this->emplace<TextElement>(usernameText, MessageElementFlag::Username,
+                                   this->usernameColor_,
+                                   FontStyle::ChatMediumBold);
+
+        this->emplace<TextElement>("->", MessageElementFlag::Username,
+                                   MessageColor::System, FontStyle::ChatMedium);
+
+        this->emplace<TextElement>(
+                args.sentWhisperRecipient + ":", MessageElementFlag::Username,
+                MessageColor::Text, FontStyle::ChatMediumBold)
+            ->setLink({Link::UserWhisper, args.sentWhisperRecipient});
     }
     else if (args.isReceivedWhisper)
     {

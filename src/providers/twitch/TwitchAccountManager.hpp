@@ -40,6 +40,7 @@ public:
         QString userID;
         QString clientID;
         QString oauthToken;
+        QString webOAuthToken;
     };
 
     // Returns the current twitchUsers, or the anonymous user if we're not
@@ -57,6 +58,8 @@ public:
 
     bool isLoggedIn() const;
 
+    void setCurrentWebOAuthToken(QString token);
+
     pajlada::Settings::Setting<QString> currentUsername{"/accounts/current",
                                                         ""};
 
@@ -71,6 +74,7 @@ public:
     pajlada::Signals::NoArgSignal currentUserChanged;
     pajlada::Signals::NoArgSignal userListUpdated;
     pajlada::Signals::NoArgSignal currentUserNameChanged;
+    pajlada::Signals::NoArgSignal webOAuthTokenChanged;
 
     /// Fired when the IRC server sends a "Login authentication failed" notice,
     /// indicating the current OAuth token has expired.

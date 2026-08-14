@@ -146,6 +146,8 @@ public:
     void open(ConnectionType type);
 
 private:
+    void loadWhisperHistory();
+
     Atomic<QString> lastUserThatWhisperedMe;
 
     const ChannelPtr whispersChannel;
@@ -206,6 +208,9 @@ private:
     int falloffCounter_ = 1;
 
     std::mutex connectionMutex_;
+
+    QString whisperHistoryAccountID_;
+    uint64_t whisperHistoryGeneration_{};
 
     pajlada::Signals::SignalHolder signalHolder;
 

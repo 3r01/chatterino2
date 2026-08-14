@@ -86,6 +86,7 @@ struct MessageParseArgs {
     bool allowIgnore = true;
     bool isAction = false;
     QString channelPointRewardId = "";
+    QString sentWhisperRecipient;
 };
 
 struct HighlightAlert {

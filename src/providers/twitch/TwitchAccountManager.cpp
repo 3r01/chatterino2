@@ -317,6 +317,8 @@ void TwitchAccountManager::reloadUsers()
             "/accounts/" + uid + "/clientID");
         auto oauthToken = pajlada::Settings::Setting<QString>::get(
             "/accounts/" + uid + "/oauthToken");
+        auto webOAuthToken = pajlada::Settings::Setting<QString>::get(
+            "/accounts/" + uid + "/webOAuthToken");
 
         if (username.isEmpty() || userID.isEmpty() || clientID.isEmpty() ||
             oauthToken.isEmpty())
@@ -328,6 +330,7 @@ void TwitchAccountManager::reloadUsers()
         userData.userID = userID.trimmed();
         userData.clientID = clientID.trimmed();
         userData.oauthToken = oauthToken.trimmed();
+        userData.webOAuthToken = webOAuthToken.trimmed();
 
         switch (this->addUser(userData))
         {
@@ -408,6 +411,27 @@ bool TwitchAccountManager::isLoggedIn() const
     return !this->currentUser_->isAnon();
 }
 
+void TwitchAccountManager::setCurrentWebOAuthToken(QString token)
+{
+    auto account = this->getCurrent();
+    if (account->isAnon())
+    {
+        return;
+    }
+
+    token = token.trimmed();
+    if (!account->setWebOAuthToken(token))
+    {
+        return;
+    }
+
+    const auto path =
+        QString("/accounts/uid%1/webOAuthToken").arg(account->getUserId());
+    pajlada::Settings::Setting<QString>::set(path.toStdString(), token);
+    getSettings()->requestSave();
+    this->webOAuthTokenChanged.invoke();
+}
+
 bool TwitchAccountManager::removeUser(TwitchAccount *account)
 {
     static const QString accountFormat("/accounts/uid%1");
@@ -449,6 +473,11 @@ TwitchAccountManager::AddUserResponse TwitchAccountManager::addUser(
             userUpdated = true;
         }
 
+        if (previousUser->setWebOAuthToken(userData.webOAuthToken))
+        {
+            userUpdated = true;
+        }
+
         if (userUpdated)
         {
             return AddUserResponse::UserValuesUpdated;
@@ -459,9 +488,9 @@ TwitchAccountManager::AddUserResponse TwitchAccountManager::addUser(
         }
     }
 
-    auto newUser =
-        std::make_shared<TwitchAccount>(userData.username, userData.oauthToken,
-                                        userData.clientID, userData.userID);
+    auto newUser = std::make_shared<TwitchAccount>(
+        userData.username, userData.oauthToken, userData.clientID,
+        userData.userID, userData.webOAuthToken);
 
     //    std::lock_guard<std::mutex> lock(this->mutex);
 

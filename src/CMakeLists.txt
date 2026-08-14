@@ -523,6 +523,8 @@ set(SOURCE_FILES
 
         providers/twitch/api/Helix.cpp
         providers/twitch/api/Helix.hpp
+        providers/twitch/api/WhisperHistory.cpp
+        providers/twitch/api/WhisperHistory.hpp
 
         singletons/CrashHandler.cpp
         singletons/CrashHandler.hpp
