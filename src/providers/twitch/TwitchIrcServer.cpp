@@ -22,6 +22,7 @@
 #include "providers/seventv/SeventvEmotes.hpp"
 #include "providers/seventv/SeventvEventAPI.hpp"
 #include "providers/twitch/api/Helix.hpp"
+#include "providers/twitch/api/WhisperHistory.hpp"
 #include "providers/twitch/IrcMessageHandler.hpp"
 #include "providers/twitch/PubSubManager.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
@@ -225,6 +226,14 @@ void TwitchIrcServer::initialize()
         getApp()->getAccounts()->twitch.currentUserChanged, [this]() {
             postToThread([this] {
                 this->connect();
+                this->loadWhisperHistory();
+            });
+        });
+
+    this->signalHolder.managedConnect(
+        getApp()->getAccounts()->twitch.webOAuthTokenChanged, [this]() {
+            postToThread([this] {
+                this->loadWhisperHistory();
             });
         });
 
@@ -284,6 +293,89 @@ void TwitchIrcServer::initialize()
                 {
                     channel->clearPinnedMessage();
                 }
+            });
+        });
+
+    this->loadWhisperHistory();
+}
+
+void TwitchIrcServer::loadWhisperHistory()
+{
+    const auto account = getApp()->getAccounts()->twitch.getCurrent();
+    const auto accountID = account->isAnon() ? QString{} : account->getUserId();
+    const auto generation = ++this->whisperHistoryGeneration_;
+
+    if (this->whisperHistoryAccountID_ != accountID)
+    {
+        this->whispersChannel->clearMessages();
+        this->setLastUserThatWhisperedMe({});
+        this->whisperHistoryAccountID_ = accountID;
+    }
+
+    if (accountID.isEmpty() || account->getWebOAuthToken().isEmpty())
+    {
+        return;
+    }
+
+    whisperhistory::load(
+        accountID, account->getWebOAuthToken(), this,
+        [this, generation, accountID,
+         accountName = account->getUserName()](auto messages) mutable {
+            postToThread([this, generation, accountID,
+                          accountName = std::move(accountName),
+                          messages = std::move(messages)]() mutable {
+                if (isAppAboutToQuit() ||
+                    generation != this->whisperHistoryGeneration_ ||
+                    accountID != this->whisperHistoryAccountID_)
+                {
+                    return;
+                }
+
+                QString lastReceivedWhisperer;
+                for (auto it = messages.rbegin(); it != messages.rend(); ++it)
+                {
+                    if (it->sender.id != accountID &&
+                        !it->sender.login.isEmpty())
+                    {
+                        lastReceivedWhisperer = it->sender.login;
+                        break;
+                    }
+                }
+
+                auto built = whisperhistory::buildMessages(
+                    messages, this->whispersChannel.get(), accountID,
+                    accountName);
+                std::erase_if(built, [this](const auto &message) {
+                    return !message->id.isEmpty() &&
+                           this->whispersChannel->findMessageByID(message->id);
+                });
+                this->whispersChannel->addMessagesAtStart(built);
+                if (this->getLastUserThatWhisperedMe().isEmpty() &&
+                    !lastReceivedWhisperer.isEmpty())
+                {
+                    this->setLastUserThatWhisperedMe(lastReceivedWhisperer);
+                }
+            });
+        },
+        [this, generation, accountID](const QString &error) {
+            postToThread([this, generation, accountID, error] {
+                if (isAppAboutToQuit() ||
+                    generation != this->whisperHistoryGeneration_ ||
+                    accountID != this->whisperHistoryAccountID_)
+                {
+                    return;
+                }
+
+                qCWarning(chatterinoTwitch) << "Failed to load whisper history";
+                const auto text =
+                    error == "Twitch web token expired"
+                        ? QStringLiteral("Whisper history token expired. "
+                                         "Update it in Settings > Accounts.")
+                        : QStringLiteral("Unable to load whisper history.");
+                MessageBuilder builder(systemMessage, text);
+                builder->flags.set(MessageFlag::DoNotLog);
+                this->whispersChannel->addMessage(builder.release(),
+                                                  MessageContext::Original);
             });
         });
 }

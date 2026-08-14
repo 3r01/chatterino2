@@ -35,7 +35,8 @@ class TwitchAccount : public Account
 {
 public:
     TwitchAccount(const QString &username, const QString &oauthToken_,
-                  const QString &oauthClient_, const QString &_userID);
+                  const QString &oauthClient_, const QString &_userID,
+                  const QString &webOAuthToken = {});
     ~TwitchAccount() override;
     TwitchAccount(const TwitchAccount &) = delete;
     TwitchAccount(TwitchAccount &&) = delete;
@@ -48,6 +49,7 @@ public:
     const QString &getOAuthToken() const;
     const QString &getOAuthClient() const;
     const QString &getUserId() const;
+    const QString &getWebOAuthToken() const;
 
     /**
      * The Seventv user-id of the current user. 
@@ -65,6 +67,8 @@ public:
     // Attempts to update the users OAuth Token
     // Returns true if the value has changed, otherwise false
     bool setOAuthToken(const QString &newOAuthToken);
+
+    bool setWebOAuthToken(const QString &newWebOAuthToken);
 
     // Attempts to update the users username
     // Returns true if the value has changed, otherwise false
@@ -120,6 +124,7 @@ public:
 private:
     QString oauthClient_;
     QString oauthToken_;
+    QString webOAuthToken_;
     QString userName_;
     QString userId_;
     const bool isAnon_;
