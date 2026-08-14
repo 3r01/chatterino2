@@ -30,10 +30,12 @@ using namespace Qt::Literals::StringLiterals;
 namespace chatterino {
 
 TwitchAccount::TwitchAccount(const QString &username, const QString &oauthToken,
-                             const QString &oauthClient, const QString &userID)
+                             const QString &oauthClient, const QString &userID,
+                             const QString &webOAuthToken)
     : Account(ProviderId::Twitch)
     , oauthClient_(oauthClient)
     , oauthToken_(oauthToken)
+    , webOAuthToken_(webOAuthToken)
     , userName_(username)
     , userId_(userID)
     , isAnon_(username == ANONYMOUS_USERNAME)
@@ -69,6 +71,11 @@ const QString &TwitchAccount::getUserId() const
     return this->userId_;
 }
 
+const QString &TwitchAccount::getWebOAuthToken() const
+{
+    return this->webOAuthToken_;
+}
+
 QColor TwitchAccount::color()
 {
     return this->color_.get();
@@ -100,6 +107,17 @@ bool TwitchAccount::setOAuthToken(const QString &newOAuthToken)
 
     this->oauthToken_ = newOAuthToken;
 
+    return true;
+}
+
+bool TwitchAccount::setWebOAuthToken(const QString &newWebOAuthToken)
+{
+    if (this->webOAuthToken_ == newWebOAuthToken)
+    {
+        return false;
+    }
+
+    this->webOAuthToken_ = newWebOAuthToken;
     return true;
 }
 
