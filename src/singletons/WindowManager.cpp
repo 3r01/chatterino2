@@ -135,6 +135,8 @@ WindowManager::WindowManager(const Args &appArgs_, const Paths &paths,
     qCDebug(chatterinoWindowmanager) << "init WindowManager";
 
     this->updateWordTypeMaskListener.add(settings.showTimestamps);
+    this->updateWordTypeMaskListener.add(settings.showHeaderTimestamps);
+    this->updateWordTypeMaskListener.add(settings.showAnnouncementHeader);
     this->updateWordTypeMaskListener.add(settings.showBadgesGlobalAuthority);
     this->updateWordTypeMaskListener.add(settings.showBadgesPredictions);
     this->updateWordTypeMaskListener.add(settings.showBadgesChannelAuthority);
@@ -216,6 +218,14 @@ void WindowManager::updateWordTypeMask()
     if (settings->showTimestamps)
     {
         flags.set(MEF::Timestamp);
+    }
+    if (settings->showHeaderTimestamps)
+    {
+        flags.set(MEF::HeaderTimestamp);
+    }
+    if (settings->showAnnouncementHeader)
+    {
+        flags.set(MEF::AnnouncementHeader);
     }
 
     // emotes
@@ -374,7 +384,7 @@ Window &WindowManager::createWindow(WindowType type,
     }
 
     this->windows_.push_back(window);
-    if (args.parent)
+    if (args.show)
     {
         window->show();
     }
