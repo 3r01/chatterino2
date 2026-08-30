@@ -10,13 +10,6 @@
 using namespace chatterino::literals;
 using chatterino::isAsciiArt;
 
-namespace {
-
-const QString BRAILLE_SEGMENT = QString(20, QChar(0x28FF));
-const QString BLOCK_SEGMENT = QString(20, QChar(0x25AC));
-
-}  // namespace
-
 TEST(AsciiArt, RejectsAmbiguousMessages)
 {
     EXPECT_FALSE(isAsciiArt(u"ordinary prose ⣿⣿⣿"_s));
@@ -27,13 +20,15 @@ TEST(AsciiArt, RejectsAmbiguousMessages)
 
 TEST(AsciiArt, DetectsMixedUnicodeArt)
 {
+    const QString brailleSegment(20, QChar(0x28FF));
+    const QString blockSegment(20, QChar(0x25AC));
     const auto longText = QString(200, u'x');
-    EXPECT_TRUE(isAsciiArt(BRAILLE_SEGMENT + BRAILLE_SEGMENT));
+    EXPECT_TRUE(isAsciiArt(brailleSegment + brailleSegment));
     EXPECT_TRUE(
-        isAsciiArt(BLOCK_SEGMENT + u' ' + longText + u' ' + BLOCK_SEGMENT));
+        isAsciiArt(blockSegment + u' ' + longText + u' ' + blockSegment));
 
-    const auto rowWithBlank = BRAILLE_SEGMENT + QChar(0x2800) + BRAILLE_SEGMENT;
-    EXPECT_TRUE(isAsciiArt(BRAILLE_SEGMENT + u" mixed text "_s + rowWithBlank));
+    const auto rowWithBlank = brailleSegment + QChar(0x2800) + brailleSegment;
+    EXPECT_TRUE(isAsciiArt(brailleSegment + u" mixed text "_s + rowWithBlank));
 }
 
 TEST(AsciiArt, DetectsEmojiArtByGrapheme)
