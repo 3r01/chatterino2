@@ -11,6 +11,8 @@
 #include "Test.hpp"
 #include "util/IrcHelpers.hpp"
 
+#include <utility>
+
 using namespace chatterino;
 
 namespace {
@@ -169,6 +171,13 @@ TEST_F(TestTwitchIrc, ParseTwitchSpecials)
     };
 
     auto *twitchEmotes = this->mockApplication->getEmotes()->getTwitchEmotes();
+    const auto gifAt = [](int start, int length, QString link) {
+        return TwitchSpecialOccurrence{
+            .start = start,
+            .length = length,
+            .data = TwitchGifOccurrence{.link = std::move(link)},
+        };
+    };
 
     std::vector<TestCase> testCases{
         {
@@ -355,6 +364,51 @@ TEST_F(TestTwitchIrc, ParseTwitchSpecials)
             // range bad (end character before start)
             R"(@emotes=84608:15-2 :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :foo bar)",
             {},
+        },
+        {
+            // The inclusive end points one code point beyond the message.
+            R"(@emotes=84608:0-7 :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :foo bar)",
+            {},
+        },
+        {
+            // GIFs and emotes are ordered by their position in the message.
+            R"(@emotes=25:6-10;gifs=0-4|gif|https://example.com/gif.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF] Kappa)",
+            {
+                gifAt(0, 5, QStringLiteral("https://example.com/gif.gif")),
+                {
+                    .start = 6,
+                    .length = 5,
+                    .data =
+                        TwitchEmoteOccurrence{
+                            .ptr = twitchEmotes->getOrCreateEmote(
+                                EmoteId{"25"}, EmoteName{"Kappa"}),
+                            .name = EmoteName{"Kappa"},
+                        },
+                },
+            },
+        },
+        {
+            // GIFs take precedence over conflicting emote metadata.
+            R"(@emotes=25:0-4;gifs=0-4|gif|https://example.com/gif.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
+            {gifAt(0, 5, QStringLiteral("https://example.com/gif.gif"))},
+        },
+        {
+            // IRCv3 escaping is decoded before using the URL.
+            R"(@gifs=0-4|gif|https://example.com/a\:b.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
+            {gifAt(0, 5, QStringLiteral("https://example.com/a;b.gif"))},
+        },
+        {
+            // Only a matching Giphy media URL is rewritten to WebP.
+            R"(@gifs=0-4|gif|https://media4.giphy.com/media/gif/giphy.gif?rid=giphy.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
+            {gifAt(0, 5,
+                   QStringLiteral("https://media4.giphy.com/media/gif/100.webp?"
+                                  "rid=100.webp"))},
+        },
+        {
+            R"(@gifs=0-4|gif|https://example.com/giphy.gif?rid=giphy.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
+            {gifAt(0, 5,
+                   QStringLiteral(
+                       "https://example.com/giphy.gif?rid=giphy.gif"))},
         },
     };
 

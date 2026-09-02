@@ -12,6 +12,11 @@
 #include "util/Helpers.hpp"
 #include "util/IrcHelpers.hpp"
 
+#include <QUrl>
+#include <QUrlQuery>
+
+#include <algorithm>
+#include <cstddef>
 #include <span>
 
 namespace {
@@ -43,7 +48,7 @@ void createSpecialOccurrence(QStringView occurrence,
     }
     to -= messageOffset;
     from -= messageOffset;
-    if (to >= codepointToUtf16Idx.size())
+    if (to + 1 >= codepointToUtf16Idx.size())
     {
         qCDebug(chatterinoTwitch)
             << "Out of bounds range:" << occurrence
@@ -113,15 +118,46 @@ void appendTwitchGifOccurrence(QStringView gif,
     // A single entry looks like "<range>|<gifID>|<gifURL>".
     auto [range, rest] = splitOnce(gif, u'|');
     auto [id, link] = splitOnce(rest, u'|');
-    if (link.empty() || !link.startsWith(u"https://"))
+    if (id.empty() || link.empty() || link.contains(u'|'))
     {
         qCWarning(chatterinoTwitch) << "Invalid gif:" << gif;
         return;
     }
 
-    // Always prefer the 100px tall/wide version.
-    auto linkStr =
-        std::move(link.toString()).replace(u"giphy.gif"_s, u"100.webp"_s);
+    const auto gifID = parseTagString(id.toString());
+    const auto sourceLink = parseTagString(link.toString());
+    QUrl parsedLink{sourceLink};
+    if (!parsedLink.isValid() ||
+        parsedLink.scheme().compare(u"https", Qt::CaseInsensitive) != 0)
+    {
+        qCWarning(chatterinoTwitch) << "Invalid gif URL:" << sourceLink;
+        return;
+    }
+
+    auto linkStr = sourceLink;
+    auto path = parsedLink.path();
+    const auto host = parsedLink.host().toLower();
+    const auto pathID = path.section(u'/', -2, -2);
+    if (host.startsWith(u"media") && host.endsWith(u".giphy.com") &&
+        path.endsWith(u"/giphy.gif") && pathID == gifID)
+    {
+        path.chop(QStringView{u"giphy.gif"}.size());
+        path += u"100.webp";
+        parsedLink.setPath(path);
+
+        QUrlQuery query{parsedLink};
+        auto items = query.queryItems();
+        for (auto &[key, value] : items)
+        {
+            if (key == u"rid")
+            {
+                value = u"100.webp"_s;
+            }
+        }
+        query.setQueryItems(items);
+        parsedLink.setQuery(query);
+        linkStr = parsedLink.toString(QUrl::FullyEncoded);
+    }
 
     createSpecialOccurrence(
         range, out, codepointToUtf16Idx, originalMessage, messageOffset,
@@ -210,18 +246,60 @@ std::vector<TwitchSpecialOccurrence> parseTwitchOccurrences(
     }
     codepointToUtf16Idx.push_back(content.size());
 
-    for (const auto emote : emotesTag.tokenize(u'/'))
+    for (const auto emote : emotesTag.tokenize(u'/', Qt::SkipEmptyParts))
     {
         appendTwitchEmoteOccurrences(emote, occurrences, codepointToUtf16Idx,
                                      content, messageOffset);
     }
 
-    for (const auto gif : gifsTag.tokenize(u','))
+    for (const auto gif : gifsTag.tokenize(u',', Qt::SkipEmptyParts))
     {
         appendTwitchGifOccurrence(gif, occurrences, codepointToUtf16Idx,
                                   content, messageOffset);
     }
 
+    const auto isGif = [](const TwitchSpecialOccurrence &occurrence) {
+        return std::holds_alternative<TwitchGifOccurrence>(occurrence.data);
+    };
+    std::vector<std::pair<int, int>> gifRanges;
+    for (const auto &occurrence : occurrences)
+    {
+        if (isGif(occurrence))
+        {
+            gifRanges.emplace_back(occurrence.start,
+                                   occurrence.start + occurrence.length);
+        }
+    }
+
+    occurrences.erase(
+        std::remove_if(
+            occurrences.begin(), occurrences.end(),
+            [&](const TwitchSpecialOccurrence &occurrence) {
+                if (isGif(occurrence))
+                {
+                    return false;
+                }
+                const auto end = occurrence.start + occurrence.length;
+                return std::ranges::any_of(gifRanges, [&](const auto &range) {
+                    return occurrence.start < range.second && range.first < end;
+                });
+            }),
+        occurrences.end());
+    std::ranges::stable_sort(occurrences, {}, &TwitchSpecialOccurrence::start);
+    for (size_t index = 1; index < occurrences.size();)
+    {
+        const auto previousEnd =
+            occurrences[index - 1].start + occurrences[index - 1].length;
+        if (occurrences[index].start < previousEnd)
+        {
+            occurrences.erase(occurrences.begin() +
+                              static_cast<ptrdiff_t>(index));
+        }
+        else
+        {
+            ++index;
+        }
+    }
     return occurrences;
 }
 

@@ -76,6 +76,14 @@ TEST_F(TestIgnoreController, processIgnorePhrases)
                 },
         };
     };
+    const auto gifAt = [](int at) {
+        return TwitchSpecialOccurrence{
+            .start = at,
+            .length = 5,
+            .data = TwitchGifOccurrence{.link = QStringLiteral(
+                                            "https://example.com/gif.gif")},
+        };
+    };
 
     auto regularReplace = [](auto pattern, auto replace,
                              bool caseSensitive = true) {
@@ -181,6 +189,27 @@ TEST_F(TestIgnoreController, processIgnorePhrases)
             {emoteAt(15, "Kappa")},
             "fo fo fo fo Kappa",
             {emoteAt(11, "Kappa")},
+        },
+        {
+            {regularReplace("foo", "foobar")},
+            "foo [GIF]",
+            {gifAt(4)},
+            "foobar [GIF]",
+            {gifAt(7)},
+        },
+        {
+            {regularReplace("GIF", "image")},
+            "[GIF] foo",
+            {gifAt(0)},
+            "[image] foo",
+            {},
+        },
+        {
+            {regexReplace("(?<=G)(?=I)", "x")},
+            "[GIF]",
+            {gifAt(0)},
+            "[GxIF]",
+            {},
         },
     };
 
