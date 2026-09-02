@@ -2079,6 +2079,30 @@ void MessageBuilder::addTextOrEmote(TextState &state, QString string)
     this->appendOrEmplaceText(string, textColor);
 }
 
+void MessageBuilder::addTwitchGif(const QString &link, QStringView originalText)
+{
+    auto original = originalText.toString();
+    if (getSettings()->showTwitchGifs)
+    {
+        this->emplace<LinebreakElement>(MessageElementFlag::TwitchGif);
+        this->emplace<ImageElement>(Image::fromUrl(Url{link}, 1.0, {100, 100}),
+                                    MessageElementFlag::TwitchGif)
+            ->setLink(Link{Link::Url, link})
+            ->setTooltip(original.toHtmlEscaped());
+    }
+    else
+    {
+        auto *el = this->emplace<LinkElement>(
+            LinkElement::Parsed{
+                .lowercase = original,
+                .original = original,
+            },
+            link, MessageElementFlag::Text, MessageColor::Link);
+
+        getApp()->getLinkResolver()->resolve(el->linkInfo());
+    }
+}
+
 bool MessageBuilder::isEmpty() const
 {
     return this->message_->elements.empty();
@@ -2805,15 +2829,7 @@ void MessageBuilder::addWords(
                     ->setTrailingSpace(tok.trailingSpace);
             },
             [&](const TokenizedGif &gif) {
-                auto original = gif.originalText.toString();
-                auto *el = this->emplace<LinkElement>(
-                    LinkElement::Parsed{
-                        .lowercase = original,
-                        .original = original,
-                    },
-                    gif.link, MessageElementFlag::Text, MessageColor::Link);
-
-                getApp()->getLinkResolver()->resolve(el->linkInfo());
+                this->addTwitchGif(gif.link, gif.originalText);
             },
         });
 }
