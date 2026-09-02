@@ -1,5 +1,5 @@
 {
-    "input": "@badges=subscriber/12;color=#CC00C2;display-name=cspice;emotes=;id=6fc4c3e0-ca61-454a-84b8-5669dee69fc9;login=cspice;mod=0;msg-id=resub;msg-param-months=12;msg-param-sub-plan-name=Channel\\sSubscription\\s(forsenlol):\\s$9.99\\sSub;msg-param-sub-plan=2000;room-id=22484632;subscriber=1;system-msg=cspice\\sjust\\ssubscribed\\swith\\sa\\sTier\\s2\\ssub.\\scspice\\ssubscribed\\sfor\\s12\\smonths\\sin\\sa\\srow!;tmi-sent-ts=1528192510808;turbo=0;user-id=47894662;user-type= :tmi.twitch.tv USERNOTICE #pajlada",
+    "input": "@tmi-sent-ts=1662201102276;emotes=84609:2-9 :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :foo bar baz qox",
     "output": [
         {
             "channelName": "pajlada",
@@ -34,43 +34,47 @@
                         "trailingSpace": true,
                         "type": "TextElement",
                         "words": [
-                            "9:55"
+                            "10:31"
                         ]
                     },
-                    "exhaustiveFlags": true,
                     "flags": "Timestamp",
                     "format": "",
                     "link": {
                         "type": "None",
                         "value": ""
                     },
-                    "time": "09:55:10",
+                    "time": "10:31:42",
                     "tooltip": "",
                     "trailingSpace": true,
                     "type": "TimestampElement"
                 },
                 {
-                    "color": "Text",
-                    "exhaustiveFlags": true,
-                    "fallbackColor": "System",
-                    "flags": "Text|Mention",
+                    "flags": "ModeratorTools",
                     "link": {
                         "type": "None",
                         "value": ""
                     },
-                    "style": "ChatMedium",
                     "tooltip": "",
                     "trailingSpace": true,
-                    "type": "MentionElement",
-                    "userColor": "#ffcc00c2",
-                    "userLoginName": "cspice",
+                    "type": "TwitchModerationElement"
+                },
+                {
+                    "color": "#ff999999",
+                    "flags": "Username",
+                    "link": {
+                        "type": "UserInfo",
+                        "value": ""
+                    },
+                    "style": "ChatMediumBold",
+                    "tooltip": "",
+                    "trailingSpace": true,
+                    "type": "TextElement",
                     "words": [
-                        "cspice"
+                        "test:"
                     ]
                 },
                 {
-                    "color": "System",
-                    "exhaustiveFlags": true,
+                    "color": "Text",
                     "flags": "Text",
                     "link": {
                         "type": "None",
@@ -81,37 +85,30 @@
                     "trailingSpace": true,
                     "type": "TextElement",
                     "words": [
-                        "just",
-                        "subscribed",
-                        "with",
-                        "a",
-                        "Tier",
-                        "2",
-                        "sub."
+                        "fo"
                     ]
                 },
                 {
-                    "color": "Text",
-                    "exhaustiveFlags": true,
-                    "fallbackColor": "System",
-                    "flags": "Text|Mention",
+                    "emote": {
+                        "images": {
+                            "1x": "https://static-cdn.jtvnw.net/emoticons/v2/84609/default/dark/1.0",
+                            "2x": "https://static-cdn.jtvnw.net/emoticons/v2/84609/default/dark/2.0",
+                            "3x": "https://static-cdn.jtvnw.net/emoticons/v2/84609/default/dark/3.0"
+                        },
+                        "name": "o bar ba",
+                        "tooltip": "o bar ba<br>Twitch Emote"
+                    },
+                    "flags": "EmoteImage|EmoteText",
                     "link": {
                         "type": "None",
                         "value": ""
                     },
-                    "style": "ChatMedium",
-                    "tooltip": "",
-                    "trailingSpace": true,
-                    "type": "MentionElement",
-                    "userColor": "#ffcc00c2",
-                    "userLoginName": "cspice",
-                    "words": [
-                        "cspice"
-                    ]
+                    "tooltip": "o bar ba<br>Twitch Emote",
+                    "trailingSpace": false,
+                    "type": "EmoteElement"
                 },
                 {
-                    "color": "System",
-                    "exhaustiveFlags": true,
+                    "color": "Text",
                     "flags": "Text",
                     "link": {
                         "type": "None",
@@ -122,34 +119,41 @@
                     "trailingSpace": true,
                     "type": "TextElement",
                     "words": [
-                        "subscribed",
-                        "for",
-                        "12",
-                        "months",
-                        "in",
-                        "a",
-                        "row!"
+                        "z",
+                        "qox"
                     ]
+                },
+                {
+                    "background": "#ffa0a0a4",
+                    "flags": "ReplyButton",
+                    "link": {
+                        "type": "ReplyToMessage",
+                        "value": ""
+                    },
+                    "padding": 2,
+                    "tooltip": "",
+                    "trailingSpace": true,
+                    "type": "CircularImageElement",
+                    "url": ""
                 }
             ],
             "externalBadges": [
             ],
-            "flags": "System|Highlighted|Collapsed|Subscription",
+            "flags": "Collapsed",
             "frozen": false,
-            "highlightColor": "#64c466ff",
-            "id": "6fc4c3e0-ca61-454a-84b8-5669dee69fc9",
+            "id": "",
             "localizedName": "",
-            "loginName": "cspice",
-            "messageText": "cspice just subscribed with a Tier 2 sub. cspice subscribed for 12 months in a row!",
-            "searchText": "cspice just subscribed with a Tier 2 sub. cspice subscribed for 12 months in a row!",
-            "serverReceivedTime": "2018-06-05T09:55:10Z",
+            "loginName": "test",
+            "messageText": "foo bar baz qox",
+            "searchText": "test  test: foo bar baz qox ",
+            "serverReceivedTime": "2022-09-03T10:31:42Z",
             "timeoutUser": "",
             "twitchBadgeInfos": {
             },
             "twitchBadges": [
             ],
-            "userID": "47894662",
-            "usernameColor": "#ffcc00c2"
+            "userID": "",
+            "usernameColor": "#ff000000"
         }
     ]
 }

@@ -168,6 +168,14 @@ public:
         "/appearance/messages/announcements/showHeader",
         true,
     };
+    BoolSetting showSubscriptionHeader = {
+        "/appearance/messages/subscriptions/showHeader",
+        true,
+    };
+    BoolSetting showWatchStreakHeader = {
+        "/appearance/messages/watchstreaks/showHeader",
+        true,
+    };
     BoolSetting animationsWhenFocused = {
         "/appearance/enableAnimationsWhenFocused", false};
     BoolSetting hideMessageTimestampsWhenLive = {
@@ -191,6 +199,10 @@ public:
         "/appearance/messages/messageOverflow", MessageOverflow::Highlight};
     BoolSetting wrapAsciiArt = {
         "/appearance/messages/wrapAsciiArt",
+        true,
+    };
+    BoolSetting showTwitchGifs = {
+        "/appearance/messages/showTwitchGifs",
         true,
     };
     BoolSetting separateMessages = {"/appearance/messages/separateMessages",

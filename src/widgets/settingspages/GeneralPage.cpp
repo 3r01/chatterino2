@@ -557,6 +557,18 @@ void GeneralPage::initLayout(GeneralPageView &layout)
                             s.showAnnouncementHeader)
         ->addTo(layout);
 
+    SettingWidget::checkbox("Show subscription header",
+                            s.showSubscriptionHeader)
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Show watch streak header", s.showWatchStreakHeader)
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Show Twitch GIFs", s.showTwitchGifs)
+        ->setTooltip("Twitch GIFs will be shown inline. When disabled, they're "
+                     "shown as links.")
+        ->addTo(layout);
+
     layout.addDropdown<int>(
         "Limit message height",
         {"Never", "2 lines", "3 lines", "4 lines", "5 lines"},

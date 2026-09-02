@@ -48,7 +48,7 @@ enum class MessageElementFlag : int64_t {
     EmoteText = (1LL << 5),
     Emote = EmoteImage | EmoteText,
 
-    // unused: (1LL << 7),
+    TwitchGif = (1LL << 7),
 
     ChannelPointReward = (1LL << 8),
     ChannelPointRewardImage = ChannelPointReward | EmoteImage,
@@ -162,6 +162,12 @@ enum class MessageElementFlag : int64_t {
 
     /// Applied to all elements of the announcement header
     AnnouncementHeader = (1LL << 39),
+
+    /// Applied to all elements of subscription and resubscription headers
+    SubscriptionHeader = (1LL << 40),
+
+    /// Applied to all elements of watch streak headers
+    WatchStreakHeader = (1LL << 41),
 
     Default = Timestamp | Badges | Username | BitsStatic | EmoteImage |
               BitsAmount | Text | AlwaysShow,
@@ -455,15 +461,18 @@ class MentionElement : public TextElement
 public:
     static constexpr std::string_view TYPE = "mention";
 
-    explicit MentionElement(const QString &displayName, QString loginName_,
-                            const MessageColor &fallbackColor_,
-                            const MessageColor &userColor_);
+    explicit MentionElement(
+        const QString &displayName, QString loginName_,
+        const MessageColor &fallbackColor_, const MessageColor &userColor_,
+        MessageElementFlags messageFlags = MessageElementFlags{
+            MessageElementFlag::Text, MessageElementFlag::Mention});
 
     /// This is intended only for cloning the element.
     explicit MentionElement(TextElement::CloneConstructorTag, QStringList words,
                             QString loginName_,
                             const MessageColor &fallbackColor_,
-                            const MessageColor &userColor_);
+                            const MessageColor &userColor_,
+                            MessageElementFlags messageFlags);
     /// Deprioritized ctor allowing us to pass through a potentially invalid userColor_
     ///
     /// If the userColor_ is invalid, we fall back to the fallbackColor_

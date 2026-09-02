@@ -846,6 +846,7 @@ c2.MessageElementFlag = {
     EmoteImage = 0,
     EmoteText = 0,
     Emote = 0,
+    TwitchGif = 0,
     ChannelPointReward = 0,
     ChannelPointRewardImage = 0,
     BitsStatic = 0,
@@ -875,6 +876,8 @@ c2.MessageElementFlag = {
     ReplyButton = 0,
     HeaderTimestamp = 0,
     AnnouncementHeader = 0,
+    SubscriptionHeader = 0,
+    WatchStreakHeader = 0,
     Default = 0,
 }
 
@@ -930,6 +933,7 @@ c2.MessageFlag = {
     WatchStreak = 0,
     Announcement = 0,
     UncategorizedNotification = 0,
+    AsciiArt = 0,
 }
 
 -- End src/messages/MessageFlag.hpp
