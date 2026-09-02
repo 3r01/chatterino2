@@ -142,7 +142,7 @@ void appendTwitchGifOccurrence(QStringView gif,
         path.endsWith(u"/giphy.gif") && pathID == gifID)
     {
         path.chop(QStringView{u"giphy.gif"}.size());
-        path += u"200.webp";
+        path += u"100.webp";
         parsedLink.setPath(path);
 
         QUrlQuery query{parsedLink};
@@ -151,7 +151,7 @@ void appendTwitchGifOccurrence(QStringView gif,
         {
             if (key == u"rid")
             {
-                value = u"200.webp"_s;
+                value = u"100.webp"_s;
             }
         }
         query.setQueryItems(items);

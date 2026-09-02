@@ -401,8 +401,8 @@ TEST_F(TestTwitchIrc, ParseTwitchSpecials)
             // Only a matching Giphy media URL is rewritten to WebP.
             R"(@gifs=0-4|gif|https://media4.giphy.com/media/gif/giphy.gif?rid=giphy.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
             {gifAt(0, 5,
-                   QStringLiteral("https://media4.giphy.com/media/gif/200.webp?"
-                                  "rid=200.webp"))},
+                   QStringLiteral("https://media4.giphy.com/media/gif/100.webp?"
+                                  "rid=100.webp"))},
         },
         {
             R"(@gifs=0-4|gif|https://example.com/giphy.gif?rid=giphy.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
