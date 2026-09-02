@@ -8,6 +8,7 @@
 #include "util/DebugCount.hpp"
 
 #include <pajlada/signals/signal.hpp>
+#include <QByteArray>
 #include <QList>
 #include <QPixmap>
 #include <QString>
@@ -39,6 +40,7 @@ class Frames
 public:
     Frames();
     Frames(QList<Frame> &&frames);
+    Frames(QByteArray data, bool animated);
     ~Frames();
 
     Frames(const Frames &) = delete;
@@ -48,6 +50,7 @@ public:
     Frames &operator=(Frames &&) = delete;
 
     void clear();
+    void touch();
     bool empty() const;
     bool animated() const;
     void advance();
@@ -55,9 +58,13 @@ public:
     std::optional<QPixmap> first() const;
 
 private:
+    struct Movie;
+
     int64_t memoryUsage() const;
     void processOffset();
+    void connectMovieTimer();
     QList<Frame> items_;
+    std::unique_ptr<Movie> movie_;
     QList<Frame>::size_type index_{0};
     int durationOffset_{0};
     pajlada::Signals::Connection gifTimerConnection_;
@@ -66,6 +73,8 @@ private:
 QList<Frame> readFrames(QImageReader &reader, const Url &url,
                         QSize targetSize = {});
 void assignFrames(std::weak_ptr<Image> weak, QList<Frame> parsed);
+void assignMovieFrames(std::weak_ptr<Image> weak, QByteArray data,
+                       bool animated);
 
 }  // namespace chatterino::detail
 
@@ -91,6 +100,8 @@ public:
 
     static ImagePtr fromUrl(const Url &url, qreal scale = 1,
                             QSize expectedSize = {});
+    static ImagePtr fromUrlAnimated(const Url &url, qreal scale = 1,
+                                    QSize expectedSize = {});
     static ImagePtr fromUrlResized(const Url &url, QSize targetSize,
                                    qreal scale);
     static ImagePtr fromResourcePixmap(const QPixmap &pixmap, qreal scale = 1);
@@ -113,6 +124,7 @@ public:
 private:
     Image();
     Image(const Url &url, qreal scale, QSize expectedSize);
+    Image(const Url &url, qreal scale, QSize expectedSize, bool useQMovie);
     Image(const Url &url, qreal scale, QSize expectedSize, QSize resizedSize);
     Image(qreal scale);
 
@@ -129,6 +141,7 @@ private:
     /// loading images.
     const QSize expectedSize_{16, 16};
     const QSize resizedSize_{};
+    const bool useQMovie_ = false;
     std::atomic_bool empty_{false};
 
     bool shouldLoad_{false};
@@ -141,6 +154,8 @@ private:
     friend class ImageExpirationPool;
     friend void detail::assignFrames(std::weak_ptr<Image>,
                                      QList<detail::Frame>);
+    friend void detail::assignMovieFrames(std::weak_ptr<Image>, QByteArray,
+                                          bool);
 };
 
 // forward-declarable function that calls Image::getEmpty() under the hood.

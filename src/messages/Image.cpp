@@ -20,6 +20,7 @@
 #include <boost/functional/hash.hpp>
 #include <QBuffer>
 #include <QImageReader>
+#include <QMovie>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -31,8 +32,51 @@
 const auto IMAGE_POOL_CLEANUP_INTERVAL = std::chrono::minutes(1);
 // Duration since last usage of Image pixmap before expiration of frames
 const auto IMAGE_POOL_IMAGE_LIFETIME = std::chrono::minutes(10);
+const auto MOVIE_PAUSE_AFTER = std::chrono::seconds(1);
+constexpr qsizetype MAX_MOVIE_DATA_BYTES = 20 * 1024 * 1024;
+constexpr qint64 MAX_MOVIE_FRAME_BYTES = 4 * 1024 * 1024;
 
 namespace chatterino::detail {
+
+namespace {
+
+int normalizedFrameDuration(int duration)
+{
+    if (duration <= 10)
+    {
+        return 100;
+    }
+    return std::max<int>(GIF_FRAME_LENGTH, duration);
+}
+
+}  // namespace
+
+struct Frames::Movie {
+    Movie(QByteArray bytes, bool isAnimated)
+        : data(std::move(bytes))
+        , buffer(&this->data)
+        , animated(isAnimated)
+    {
+        this->buffer.open(QIODevice::ReadOnly);
+        this->movie.setDevice(&this->buffer);
+        this->movie.setCacheMode(QMovie::CacheNone);
+        QObject::connect(&this->movie, &QMovie::error, [this] {
+            this->decodeFailed = true;
+        });
+    }
+
+    QByteArray data;
+    QBuffer buffer;
+    QMovie movie;
+    pajlada::Signals::Connection gifTimerConnection;
+    std::chrono::steady_clock::time_point lastUsed =
+        std::chrono::steady_clock::now();
+    int elapsed = 0;
+    int nextDelay = 100;
+    bool animated = false;
+    bool finished = false;
+    bool decodeFailed = false;
+};
 
 Frames::Frames()
 {
@@ -89,6 +133,30 @@ Frames::Frames(QList<Frame> &&frames)
     DebugCount::increase(DebugObject::BytesImageLoaded, this->memoryUsage());
 }
 
+Frames::Frames(QByteArray data, bool animated)
+    : movie_(std::make_unique<Movie>(std::move(data), animated))
+{
+    assertInGuiThread();
+    DebugCount::increase(DebugObject::Image);
+
+    if (!this->movie_->movie.isValid() || !this->movie_->movie.jumpToFrame(0))
+    {
+        this->movie_.reset();
+        return;
+    }
+
+    this->movie_->nextDelay =
+        normalizedFrameDuration(this->movie_->movie.nextFrameDelay());
+    DebugCount::increase(DebugObject::LoadedImage);
+    if (this->animated())
+    {
+        DebugCount::increase(DebugObject::AnimatedImage);
+        this->connectMovieTimer();
+    }
+    DebugCount::increase(DebugObject::BytesImageCurrent, this->memoryUsage());
+    DebugCount::increase(DebugObject::BytesImageLoaded, this->memoryUsage());
+}
+
 Frames::~Frames()
 {
     assertInGuiThread();
@@ -110,6 +178,14 @@ Frames::~Frames()
 
 int64_t Frames::memoryUsage() const
 {
+    if (this->movie_)
+    {
+        const auto pixmap = this->movie_->movie.currentPixmap();
+        return this->movie_->data.size() +
+               (int64_t(pixmap.width()) * int64_t(pixmap.height()) *
+                int64_t(pixmap.depth()) / 8);
+    }
+
     int64_t usage = 0;
     for (const auto &frame : this->items_)
     {
@@ -124,6 +200,36 @@ int64_t Frames::memoryUsage() const
 
 void Frames::advance()
 {
+    if (this->movie_)
+    {
+        if (this->movie_->finished)
+        {
+            return;
+        }
+        if (std::chrono::steady_clock::now() - this->movie_->lastUsed >
+            MOVIE_PAUSE_AFTER)
+        {
+            this->movie_->gifTimerConnection.disconnect();
+            return;
+        }
+
+        this->movie_->elapsed += GIF_FRAME_LENGTH;
+        while (this->movie_->elapsed >= this->movie_->nextDelay)
+        {
+            this->movie_->elapsed -= this->movie_->nextDelay;
+            this->movie_->decodeFailed = false;
+            if (!this->movie_->movie.jumpToNextFrame())
+            {
+                this->movie_->finished = true;
+                this->movie_->gifTimerConnection.disconnect();
+                return;
+            }
+            this->movie_->nextDelay =
+                normalizedFrameDuration(this->movie_->movie.nextFrameDelay());
+        }
+        return;
+    }
+
     this->durationOffset_ += GIF_FRAME_LENGTH;
     this->processOffset();
 }
@@ -161,24 +267,68 @@ void Frames::clear()
     DebugCount::decrease(DebugObject::BytesImageCurrent, this->memoryUsage());
     DebugCount::increase(DebugObject::BytesImageUnloaded, this->memoryUsage());
 
+    if (this->animated())
+    {
+        DebugCount::decrease(DebugObject::AnimatedImage);
+    }
     this->items_.clear();
+    this->movie_.reset();
     this->index_ = 0;
     this->durationOffset_ = 0;
     this->gifTimerConnection_.disconnect();
 }
 
+void Frames::touch()
+{
+    if (!this->movie_)
+    {
+        return;
+    }
+    this->movie_->lastUsed = std::chrono::steady_clock::now();
+    this->connectMovieTimer();
+}
+
+void Frames::connectMovieTimer()
+{
+    if (!this->movie_ || !this->movie_->animated || this->movie_->finished ||
+        this->movie_->gifTimerConnection.isConnected())
+    {
+        return;
+    }
+    if (auto *app = tryGetApp())
+    {
+        this->movie_->gifTimerConnection =
+            app->getEmotes()->getGIFTimer()->signal.connect([this] {
+                this->advance();
+            });
+    }
+}
+
 bool Frames::empty() const
 {
+    if (this->movie_)
+    {
+        return this->movie_->movie.currentPixmap().isNull();
+    }
     return this->items_.empty();
 }
 
 bool Frames::animated() const
 {
+    if (this->movie_)
+    {
+        return this->movie_->animated;
+    }
     return this->items_.size() > 1;
 }
 
 std::optional<QPixmap> Frames::current() const
 {
+    if (this->movie_)
+    {
+        const auto pixmap = this->movie_->movie.currentPixmap();
+        return pixmap.isNull() ? std::nullopt : std::optional<QPixmap>{pixmap};
+    }
     if (this->items_.empty())
     {
         return std::nullopt;
@@ -189,6 +339,10 @@ std::optional<QPixmap> Frames::current() const
 
 std::optional<QPixmap> Frames::first() const
 {
+    if (this->movie_)
+    {
+        return this->current();
+    }
     if (this->items_.empty())
     {
         return std::nullopt;
@@ -227,12 +381,8 @@ QList<Frame> readFrames(QImageReader &reader, const Url &url, QSize targetSize)
             // a duration of 100 ms for any frames that specify a duration of <= 10 ms.
             // See http://webkit.org/b/36082 for more information.
             // https://github.com/SevenTV/chatterino7/issues/46#issuecomment-1010595231
-            int duration = reader.nextImageDelay();
-            if (duration <= 10)
-            {
-                duration = 100;
-            }
-            duration = std::max(20, duration);
+            const auto duration =
+                normalizedFrameDuration(reader.nextImageDelay());
             frames.append(Frame{
                 .image = std::move(pixmap),
                 .duration = duration,
@@ -285,6 +435,30 @@ void assignFrames(std::weak_ptr<Image> weak, QList<Frame> parsed)
         }
     };
 
+    postToGuiThread(cb);
+}
+
+void assignMovieFrames(std::weak_ptr<Image> weak, QByteArray data,
+                       bool animated)
+{
+    auto cb = [data = std::move(data), animated,
+               weak = std::move(weak)]() mutable {
+        auto shared = weak.lock();
+        if (!shared)
+        {
+            return;
+        }
+        shared->frames_ =
+            std::make_unique<detail::Frames>(std::move(data), animated);
+        if (shared->frames_->empty())
+        {
+            shared->empty_ = true;
+        }
+        if (auto *app = tryGetApp())
+        {
+            app->getWindows()->forceLayoutChannelViews();
+        }
+    };
     postToGuiThread(cb);
 }
 
@@ -341,6 +515,21 @@ ImagePtr Image::fromUrl(const Url &url, qreal scale, QSize expectedSize)
         cache[url] = shared = ImagePtr(new Image(url, scale, expectedSize));
     }
 
+    return shared;
+}
+
+ImagePtr Image::fromUrlAnimated(const Url &url, qreal scale, QSize expectedSize)
+{
+    static std::unordered_map<Url, std::weak_ptr<Image>> cache;
+    static std::mutex mutex;
+
+    std::lock_guard<std::mutex> lock(mutex);
+    auto shared = cache[url].lock();
+    if (!shared)
+    {
+        cache[url] = shared =
+            ImagePtr(new Image(url, scale, expectedSize, true));
+    }
     return shared;
 }
 
@@ -422,6 +611,17 @@ Image::Image(const Url &url, qreal scale, QSize expectedSize)
 {
 }
 
+Image::Image(const Url &url, qreal scale, QSize expectedSize, bool useQMovie)
+    : url_(url)
+    , scale_(scale)
+    , expectedSize_(expectedSize.isValid() ? expectedSize
+                                           : (QSize(16, 16) * scale))
+    , useQMovie_(useQMovie)
+    , shouldLoad_(true)
+    , frames_(std::make_unique<detail::Frames>())
+{
+}
+
 Image::Image(const Url &url, qreal scale, QSize expectedSize, QSize resizedSize)
     : url_(url)
     , scale_(scale)
@@ -487,6 +687,8 @@ std::optional<QPixmap> Image::pixmapOrLoad() const
     this->lastUsed_ = std::chrono::steady_clock::now();
 
     this->load();
+
+    this->frames_->touch();
 
     return this->frames_->current();
 }
@@ -597,8 +799,16 @@ void Image::actuallyLoad()
 
             assert(!isAppAboutToQuit());
 
+            auto data = result.getData();
+            if (shared->useQMovie_ && data.size() > MAX_MOVIE_DATA_BYTES)
+            {
+                qCDebug(chatterinoImage) << "movie data too large in RAM";
+                shared->empty_ = true;
+                return;
+            }
+
             QBuffer buffer;
-            buffer.setData(result.getData());
+            buffer.setData(data);
             QImageReader reader(&buffer);
 
             if (!reader.canRead())
@@ -626,9 +836,23 @@ void Image::actuallyLoad()
                 return;
             }
 
+            const auto frameBytes =
+                int64_t(size.width()) * int64_t(size.height()) * 4;
+            if (shared->useQMovie_)
+            {
+                if (frameBytes > MAX_MOVIE_FRAME_BYTES)
+                {
+                    qCDebug(chatterinoImage) << "movie frame too large in RAM";
+                    shared->empty_ = true;
+                    return;
+                }
+                detail::assignMovieFrames(shared, std::move(data),
+                                          reader.imageCount() > 1);
+                return;
+            }
+
             // use "double" to prevent int overflows
-            if (double(size.width()) * double(size.height()) *
-                    double(reader.imageCount()) * 4.0 >
+            if (double(frameBytes) * double(reader.imageCount()) >
                 double(Image::maxBytesRam))
             {
                 qCDebug(chatterinoImage) << "image too large in RAM";
