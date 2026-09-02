@@ -2085,7 +2085,7 @@ void MessageBuilder::addTwitchGif(const QString &link, QStringView originalText)
     if (getSettings()->showTwitchGifs)
     {
         this->emplace<LinebreakElement>(MessageElementFlag::TwitchGif);
-        this->emplace<ImageElement>(Image::fromUrl(Url{link}, 1.0, {100, 100}),
+        this->emplace<ImageElement>(Image::fromUrl(Url{link}, 0.7, {200, 200}),
                                     MessageElementFlag::TwitchGif)
             ->setLink(Link{Link::Url, link})
             ->setTooltip(original.toHtmlEscaped());
