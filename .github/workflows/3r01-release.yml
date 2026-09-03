@@ -259,6 +259,10 @@ jobs:
             3r01-linux-${{ env.QT_VERSION }}-
             3r01-linux-
 
+      - name: Ignore the runner cache directory
+        shell: bash
+        run: echo '/.ccache/' >> .git/info/exclude
+
       - name: Cache Conan packages
         uses: actions/cache@v6
         with:
