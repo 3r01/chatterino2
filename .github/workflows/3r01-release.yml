@@ -242,7 +242,7 @@ jobs:
         with:
           cache: true
           cache-key-prefix: ${{ runner.os }}-3r01-QtCache-${{ env.QT_VERSION }}-webengine
-          modules: qtimageformats qtwebchannel qtwebengine
+          modules: qtimageformats qtpositioning qtwebchannel qtwebengine
           version: ${{ env.QT_VERSION }}
 
       - name: Install system dependencies
