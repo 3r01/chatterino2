@@ -661,7 +661,7 @@ void sendGifWithIntegrity(const QJsonObject &input,
     getSession()->enqueue(input, webOAuthToken, caller, std::move(onSuccess),
                           std::move(onError));
 }
-#else
+#elif !defined(CHATTERINO_HAS_QT_WEBENGINE)
 void warmGifIntegritySession()
 {
 }

@@ -42,6 +42,8 @@ option(CHATTERINO_ALLOW_PRIVATE_QT_API "Allow uses of Qt's private API - when en
 option(CHATTERINO_SPELLCHECK "Enable spellchecking in Chatterino (requires Hunspell)" OFF)
 option(CHATTERINO_NIGHTLY_BUILD "Specifies whether this is a nightly build." OFF)
 option(CHATTERINO_3R01_BUILD "Build the 3r01 Chatterino distribution." ON)
+option(CHATTERINO_3R01_REQUIRE_QT_WEBENGINE
+       "Require Qt WebEngine for the 3r01 Linux build." OFF)
 set(CHATTERINO_3R01_BUILD_NUMBER "0" CACHE STRING "Monotonic 3r01 release build number.")
 
 option(CHATTERINO_SANITIZER_SUPPORT "Attempt to enable Sanitizer support on the test and app targets. Actual sanitizers can then be enabled with the SANITIZE_* options." OFF)
@@ -175,6 +177,19 @@ find_package(Qt${MAJOR_QT_VERSION} REQUIRED
     Svg
     Concurrent
     )
+if(CHATTERINO_3R01_REQUIRE_QT_WEBENGINE)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+       NOT CHATTERINO_3R01_BUILD OR NOT BUILD_WITH_QT6 OR
+       CHATTERINO_STATIC_QT_BUILD)
+        message(FATAL_ERROR
+            "The required 3r01 Qt WebEngine integration needs a dynamic Qt 6 Linux build"
+        )
+    endif()
+    find_package(Qt6 REQUIRED COMPONENTS WebEngineWidgets)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CHATTERINO_3R01_BUILD AND
+       BUILD_WITH_QT6 AND NOT CHATTERINO_STATIC_QT_BUILD)
+    find_package(Qt6 QUIET COMPONENTS WebEngineWidgets)
+endif()
 if(CHATTERINO_ALLOW_PRIVATE_QT_API)
     # Only exists since 6.10 and prints a warning regarding private headers
     find_package(Qt${MAJOR_QT_VERSION} COMPONENTS GuiPrivate)

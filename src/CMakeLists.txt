@@ -528,6 +528,7 @@ set(SOURCE_FILES
         providers/twitch/api/TwitchGifs.hpp
         providers/twitch/api/TwitchIntegrity.cpp
         providers/twitch/api/TwitchIntegrity.hpp
+        providers/twitch/api/TwitchIntegrityQtWebEngine.cpp
         providers/twitch/api/WhisperHistory.cpp
         providers/twitch/api/WhisperHistory.hpp
 
@@ -997,6 +998,14 @@ target_link_libraries(${LIBRARY_PROJECT}
         twitch-eventsub-ws
         BoostCertify
         )
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CHATTERINO_3R01_BUILD AND
+   NOT CHATTERINO_STATIC_QT_BUILD AND
+   TARGET Qt6::WebEngineWidgets)
+    target_link_libraries(${LIBRARY_PROJECT} PUBLIC Qt6::WebEngineWidgets)
+    target_compile_definitions(${LIBRARY_PROJECT}
+        PUBLIC CHATTERINO_HAS_QT_WEBENGINE
+    )
+endif()
 if (CHATTERINO_PLUGINS)
     target_link_libraries(${LIBRARY_PROJECT} PUBLIC lua sol2::sol2)
 endif()

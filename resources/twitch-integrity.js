@@ -169,20 +169,28 @@
     };
 
     window.__chatterinoSendGif = config => void execute(config);
-    document.addEventListener("kpsdk-load", () => {
+    const configureKasada = () => {
         window.KPSDK.configure([{
             protocol: "https:", method: "POST",
             domain: "gql.twitch.tv", path: "/integrity"
         }]);
-    }, { once: true });
-    document.addEventListener("kpsdk-ready", () => {
+    };
+    if (typeof window.KPSDK?.configure === "function") {
         send({ type: "ready" });
-    }, { once: true });
+    } else {
+        document.addEventListener("kpsdk-load", configureKasada, {
+            once: true
+        });
+        document.addEventListener("kpsdk-ready", () => {
+            send({ type: "ready" });
+        }, { once: true });
 
-    const script = document.createElement("script");
-    script.addEventListener("error", () => send({
-        type: "startup-error", error: "Unable to load Twitch integrity code"
-    }), { once: true });
-    script.src = setup.kasadaScriptURL;
-    document.body.appendChild(script);
+        const script = document.createElement("script");
+        script.addEventListener("error", () => send({
+            type: "startup-error",
+            error: "Unable to load Twitch integrity code"
+        }), { once: true });
+        script.src = setup.kasadaScriptURL;
+        document.body.appendChild(script);
+    }
 })();

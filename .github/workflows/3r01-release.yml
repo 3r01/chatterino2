@@ -224,6 +224,121 @@ jobs:
         shell: bash
         run: conan cache clean --source --build --download "*"
 
+  build-linux:
+    name: Build bundled Linux release
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: automation/3r01-candidate
+          submodules: recursive
+
+      - name: Install Qt with WebEngine
+        uses: jurplel/install-qt-action@v4.3.1
+        with:
+          cache: true
+          cache-key-prefix: ${{ runner.os }}-3r01-QtCache-${{ env.QT_VERSION }}-webengine
+          modules: qtimageformats qtwebengine
+          version: ${{ env.QT_VERSION }}
+
+      - name: Install system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnotify-dev libfuse2 ninja-build pkg-config
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: 3r01-linux-${{ env.QT_VERSION }}-webengine
+          restore-keys: |
+            3r01-linux-${{ env.QT_VERSION }}-
+            3r01-linux-
+
+      - name: Cache Conan packages
+        uses: actions/cache@v6
+        with:
+          key: ${{ runner.os }}-3r01-conan-${{ hashFiles('**/conanfile.py') }}-Qt6
+          path: ~/.conan2/
+          restore-keys: |
+            ${{ runner.os }}-3r01-conan-
+
+      - name: Install Conan
+        shell: bash
+        run: |
+          python3 -m pip install --user "conan==$CONAN_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/conan" profile detect -f
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          "$HOME/.local/bin/conan" install . \
+            -s build_type=Release \
+            -c tools.cmake.cmaketoolchain:generator=Ninja \
+            -b missing \
+            --output-folder=build \
+            -o with_openssl3=True
+
+      - name: Configure and build application
+        shell: bash
+        env:
+          CHATTERINO_REQUIRE_CLEAN_GIT: On
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/AppDir/usr" \
+            -DBUILD_TESTS=Off \
+            -DBUILD_WITH_CRASHPAD=Off \
+            -DCHATTERINO_3R01_BUILD=On \
+            -DCHATTERINO_3R01_REQUIRE_QT_WEBENGINE=On \
+            "-DCHATTERINO_3R01_BUILD_NUMBER=${{ github.run_number }}" \
+            -DCHATTERINO_SPELLCHECK=On \
+            -DFORCE_JSON_GENERATION=Off \
+            -DUSE_PRECOMPILED_HEADERS=On
+          cmake --build build --target chatterino --parallel "$(nproc)"
+          cmake --install build
+          ldd AppDir/usr/bin/chatterino | grep -F libQt6WebEngineWidgets
+
+      - name: Bundle Linux application
+        shell: bash
+        env:
+          LDAI_OUTPUT: Chatterino.3r01-x86_64.AppImage
+          EXTRA_QT_MODULES: webenginewidgets
+        run: |
+          curl --fail --location --output linuxdeploy-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl --fail --location --output linuxdeploy-plugin-qt-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin qt \
+            --output appimage
+
+          ./$LDAI_OUTPUT --appimage-extract >/dev/null
+          test -n "$(find squashfs-root -type f -name QtWebEngineProcess -print -quit)"
+          test -n "$(find squashfs-root -type f -name qtwebengine_resources.pak -print -quit)"
+
+      - name: Upload bundled Linux release
+        uses: actions/upload-artifact@v7
+        with:
+          name: 3r01-linux-release-${{ needs.prepare.outputs.version }}
+          path: Chatterino.3r01-x86_64.AppImage
+          if-no-files-found: error
+
+      - name: Clean Conan cache
+        if: always()
+        shell: bash
+        run: |
+          "$HOME/.local/bin/conan" cache clean --source --build --download "*"
+
   package:
     name: Package Windows release
     needs:
@@ -315,8 +430,12 @@ jobs:
     needs:
       - prepare
       - build-and-test
+      - build-linux
       - package
-    if: needs.prepare.outputs.should_build == 'true' && needs.package.result == 'success'
+    if: >-
+      ${{ needs.prepare.outputs.should_build == 'true' &&
+          needs.build-linux.result == 'success' &&
+          needs.package.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -328,6 +447,17 @@ jobs:
         with:
           name: 3r01-release-${{ needs.prepare.outputs.version }}
           path: release-assets
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: 3r01-linux-release-${{ needs.prepare.outputs.version }}
+          path: release-assets
+
+      - name: Add Linux release checksum
+        shell: bash
+        run: |
+          cd release-assets
+          sha256sum Chatterino.3r01-x86_64.AppImage >> sha256-checksums.txt
 
       - name: Promote the verified candidate
         shell: bash
@@ -392,12 +522,14 @@ jobs:
     needs:
       - prepare
       - build-and-test
+      - build-linux
       - package
       - promote-and-release
     if: >-
       ${{ always() &&
           (needs.prepare.result == 'failure' ||
            needs.build-and-test.result == 'failure' ||
+           needs.build-linux.result == 'failure' ||
            needs.package.result == 'failure' ||
            needs.promote-and-release.result == 'failure') }}
     runs-on: ubuntu-latest

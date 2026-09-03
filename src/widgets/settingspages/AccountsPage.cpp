@@ -54,11 +54,25 @@ AccountsPage::AccountsPage()
 
     auto *historyGroup = new QGroupBox("Twitch sign-in", this);
     auto *historyLayout = new QVBoxLayout(historyGroup);
+#if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
     auto *description = new QLabel(
         "Sign in here to set up chat, recent whisper history, and GIF search "
         "and sending for the selected account. You do not need to copy any "
         "tokens from your browser.",
         historyGroup);
+#elif defined(CHATTERINO_HAS_QT_WEBENGINE)
+    auto *description = new QLabel(
+        "Chat is set up when you add an account. To enable recent whisper "
+        "history and GIF search and sending, add the selected account's "
+        "Twitch browser token below.",
+        historyGroup);
+#else
+    auto *description = new QLabel(
+        "Chat is set up when you add an account. To enable recent whisper "
+        "history, add the selected account's Twitch browser token below. GIF "
+        "sending is not available in this build.",
+        historyGroup);
+#endif
     description->setWordWrap(true);
     historyLayout->addWidget(description);
 
@@ -67,10 +81,14 @@ AccountsPage::AccountsPage()
 
     auto *signIn = new QPushButton("Sign in with Twitch", historyGroup);
     historyLayout->addWidget(signIn);
+#if !defined(Q_OS_WIN) || !defined(CHATTERINO_3R01_BUILD)
+    signIn->hide();
+#endif
 
     auto *manualDescription = new QLabel(
-        "If the sign-in window is unavailable, copy the auth-token cookie "
-        "from a signed-in twitch.tv browser session and paste it here.",
+        "Sign in to twitch.tv in a supported browser, open the browser's "
+        "developer tools, and find the cookies for https://www.twitch.tv. "
+        "Copy the value of the auth-token cookie and paste it here.",
         historyGroup);
     manualDescription->setWordWrap(true);
     historyLayout->addWidget(manualDescription);
