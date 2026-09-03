@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 concurrency:
   group: 3r01-sync-and-release
@@ -512,47 +511,3 @@ jobs:
             --title "Chatterino 3r01 ${RELEASE_VERSION}" \
             --notes "Automated 3r01 build containing the latest successfully merged Chatterino upstream plus the retained 3r01 features." \
             --latest
-
-      - name: Close resolved automation failure reports
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue list --state open --search '"3r01 automatic update failed" in:title' --json number --jq '.[].number' |
-            while read -r issue; do
-              gh issue close "$issue" --comment "A later automatic merge, build, test, and release completed successfully."
-            done
-
-  report-failure:
-    name: Report automation failure
-    needs:
-      - prepare
-      - build-and-test
-      - build-linux
-      - package
-      - promote-and-release
-    if: >-
-      ${{ always() &&
-          (needs.prepare.result == 'failure' ||
-           needs.build-and-test.result == 'failure' ||
-           needs.build-linux.result == 'failure' ||
-           needs.package.result == 'failure' ||
-           needs.promote-and-release.result == 'failure') }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create or update failure issue
-        continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          title="3r01 automatic update failed"
-          body="The automatic upstream merge, build, test, or release failed. The 3r01 branch and latest working release were not overwritten. Run details: ${RUN_URL}"
-          issue=$(gh issue list --state open --search "\"${title}\" in:title" --json number --jq '.[0].number // empty')
-          if [[ -n "$issue" ]]; then
-            gh issue comment "$issue" --body "$body"
-          else
-            gh issue create --title "$title" --body "$body"
-          fi
