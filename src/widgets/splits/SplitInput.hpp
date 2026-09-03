@@ -8,6 +8,7 @@
 #include "widgets/BaseWidget.hpp"
 
 #include <QDateTime>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -205,7 +206,9 @@ protected:
     QStringList prevMsg_;
     QString currMsg_;
     int prevIndex_ = 0;
-    QDateTime gifCooldownUntil_;
+    QHash<QString, QDateTime> gifCooldowns_;
+    quint64 gifSendGeneration_{};
+    quint64 gifAvailabilityGeneration_{};
     bool sendingGif_{};
     bool gifPickerCommandMode_{};
     bool gifsAvailable_{};

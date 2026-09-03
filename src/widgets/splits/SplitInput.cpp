@@ -14,6 +14,7 @@
 #include "messages/Link.hpp"
 #include "messages/Message.hpp"
 #include "providers/twitch/api/TwitchGifs.hpp"
+#include "providers/twitch/api/TwitchIntegrity.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchCommon.hpp"
@@ -133,16 +134,22 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
         this->ui_.textEdit->setCompleter(completer);
         this->inputHighlighter->setChannel(this->split_->getChannel());
         this->hideGifPickerPopup();
+        ++this->gifSendGeneration_;
+        this->sendingGif_ = false;
         this->updateGifChannelConnections();
         this->refreshGifAvailability();
     });
 
     this->signalHolder_.managedConnect(
         getApp()->getAccounts()->twitch.currentUserChanged, [this] {
+            ++this->gifSendGeneration_;
+            this->sendingGif_ = false;
             this->refreshGifAvailability();
         });
     this->signalHolder_.managedConnect(
         getApp()->getAccounts()->twitch.webOAuthTokenChanged, [this] {
+            ++this->gifSendGeneration_;
+            this->sendingGif_ = false;
             this->refreshGifAvailability();
         });
     getSettings()->enableSpellChecking.connect(
@@ -531,7 +538,8 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
     }
 
     const auto input = this->ui_.textEdit->toPlainText().trimmed();
-    if (input == u"/gif" || input.startsWith(u"/gif "))
+    if ((input == u"/gif" || input.startsWith(u"/gif ")) &&
+        !getApp()->getCommands()->hasUserOrPluginCommand(u"/gif"))
     {
         if (!this->gifsAvailable_)
         {
@@ -1049,7 +1057,8 @@ void SplitInput::updateCompletionPopup()
     auto *tc = dynamic_cast<TwitchChannel *>(channel);
     auto &edit = *this->ui_.textEdit;
     const auto text = edit.toPlainText();
-    if (text == u"/gif" || text.startsWith(u"/gif "))
+    if ((text == u"/gif" || text.startsWith(u"/gif ")) &&
+        !getApp()->getCommands()->hasUserOrPluginCommand(u"/gif"))
     {
         this->hideCompletionPopup();
         this->showGifPickerPopup(text == u"/gif" ? QString{} : text.sliced(5));
@@ -1295,6 +1304,8 @@ void SplitInput::updateGifChannelConnections()
 
 void SplitInput::refreshGifAvailability(bool forceRefresh)
 {
+    (void)forceRefresh;
+    const auto generation = ++this->gifAvailabilityGeneration_;
     this->gifsAvailable_ = false;
     this->gifAvailabilityKnown_ = false;
     this->updateGifButton();
@@ -1311,12 +1322,15 @@ void SplitInput::refreshGifAvailability(bool forceRefresh)
     }
 
     const auto channelID = twitchChannel->roomId();
+    const auto accountID = account->getUserId();
     const auto token = account->getWebOAuthToken();
-    this->getGifPickerPopup()->prepare(
-        channelID, token,
-        [that = QPointer(this), channelID, token](bool value) {
+    twitchgifs::loadPickerConfig(
+        channelID, token, this,
+        [that = QPointer(this), generation, channelID, accountID,
+         token](twitchgifs::PickerConfig config) {
             auto *self = that.data();
-            if (self == nullptr)
+            if (self == nullptr ||
+                self->gifAvailabilityGeneration_ != generation)
             {
                 return;
             }
@@ -1326,12 +1340,19 @@ void SplitInput::refreshGifAvailability(bool forceRefresh)
                 getApp()->getAccounts()->twitch.getCurrent();
             if (currentTwitch == nullptr ||
                 currentTwitch->roomId() != channelID ||
+                currentAccount->getUserId() != accountID ||
                 currentAccount->getWebOAuthToken() != token)
             {
                 return;
             }
+            const auto value = config.isEnabled && config.isAllowlisted &&
+                               config.canSend && !config.apiKey.isEmpty();
             self->gifsAvailable_ = value;
             self->gifAvailabilityKnown_ = true;
+            if (value)
+            {
+                twitchgifs::warmGifIntegritySession();
+            }
             self->updateGifButton();
             const auto input = self->ui_.textEdit->toPlainText();
             if (!value && (input == u"/gif" || input.startsWith(u"/gif ")) &&
@@ -1343,7 +1364,28 @@ void SplitInput::refreshGifAvailability(bool forceRefresh)
                 self->gifUnavailableCommandNotified_ = true;
             }
         },
-        forceRefresh);
+        [that = QPointer(this), generation, channelID, accountID,
+         token](const QString &) {
+            auto *self = that.data();
+            if (self == nullptr ||
+                self->gifAvailabilityGeneration_ != generation)
+            {
+                return;
+            }
+            const auto current = self->split_->getChannel();
+            auto *currentTwitch = dynamic_cast<TwitchChannel *>(current.get());
+            const auto currentAccount =
+                getApp()->getAccounts()->twitch.getCurrent();
+            if (currentTwitch == nullptr ||
+                currentTwitch->roomId() != channelID ||
+                currentAccount->getUserId() != accountID ||
+                currentAccount->getWebOAuthToken() != token)
+            {
+                return;
+            }
+            self->gifAvailabilityKnown_ = true;
+            self->updateGifButton();
+        });
 }
 
 void SplitInput::updateGifButton()
@@ -1404,7 +1446,12 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
     {
         return;
     }
-    if (this->gifCooldownUntil_ > QDateTime::currentDateTimeUtc())
+    const auto channelID = twitchChannel->roomId();
+    const auto accountID = account->getUserId();
+    const auto webOAuthToken = account->getWebOAuthToken();
+    const auto cooldownKey = accountID + u'\n' + channelID;
+    if (this->gifCooldowns_.value(cooldownKey) >
+        QDateTime::currentDateTimeUtc())
     {
         channel->addSystemMessage(
             QStringLiteral("You cannot send another GIF yet."));
@@ -1412,12 +1459,12 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
     }
 
     this->sendingGif_ = true;
+    const auto generation = ++this->gifSendGeneration_;
     this->updateGifButton();
     if (auto *popup = this->gifPickerPopup_.data())
     {
         popup->showMessage(QStringLiteral("Sending GIF..."));
     }
-    const auto channelID = twitchChannel->roomId();
     const auto input = this->ui_.textEdit->toPlainText();
     const auto commandMode = this->gifPickerCommandMode_;
     if (commandMode)
@@ -1425,11 +1472,18 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
         this->postMessageSend(input, {});
     }
     twitchgifs::send(
-        channelID, gif.id, gif.url.string, gif.searchTerm,
-        account->getWebOAuthToken(), this,
-        [that = QPointer(this), channelID](twitchgifs::SendResult result) {
+        channelID, gif.id, gif.url.string, gif.searchTerm, webOAuthToken, this,
+        [that = QPointer(this), generation, channelID, accountID, webOAuthToken,
+         cooldownKey](twitchgifs::SendResult result) {
             auto *self = that.data();
             if (self == nullptr)
+            {
+                return;
+            }
+            self->gifCooldowns_.insert(cooldownKey,
+                                       QDateTime::currentDateTimeUtc().addSecs(
+                                           result.secondsUntilCanSend));
+            if (self->gifSendGeneration_ != generation)
             {
                 return;
             }
@@ -1437,47 +1491,71 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
             self->updateGifButton();
             const auto current = self->split_->getChannel();
             auto *currentTwitch = dynamic_cast<TwitchChannel *>(current.get());
+            const auto currentAccount =
+                getApp()->getAccounts()->twitch.getCurrent();
             if (currentTwitch == nullptr ||
-                currentTwitch->roomId() != channelID)
+                currentTwitch->roomId() != channelID ||
+                currentAccount->getUserId() != accountID ||
+                currentAccount->getWebOAuthToken() != webOAuthToken)
             {
                 return;
             }
-            self->gifCooldownUntil_ = QDateTime::currentDateTimeUtc().addSecs(
-                result.secondsUntilCanSend);
             self->hideGifPickerPopup();
         },
-        [that = QPointer(this), weakChannel = std::weak_ptr<Channel>(channel)](
-            twitchgifs::SendError error) {
+        [that = QPointer(this), weakChannel = std::weak_ptr<Channel>(channel),
+         generation, channelID, accountID, webOAuthToken,
+         cooldownKey](twitchgifs::SendError error) {
             auto *self = that.data();
             if (self == nullptr)
             {
                 return;
             }
-            self->sendingGif_ = false;
+            const auto isCurrentRequest =
+                self->gifSendGeneration_ == generation;
+            const auto current = self->split_->getChannel();
+            auto *currentTwitch = dynamic_cast<TwitchChannel *>(current.get());
+            const auto currentAccount =
+                getApp()->getAccounts()->twitch.getCurrent();
+            const auto isCurrentContext =
+                isCurrentRequest && currentTwitch != nullptr &&
+                currentTwitch->roomId() == channelID &&
+                currentAccount->getUserId() == accountID &&
+                currentAccount->getWebOAuthToken() == webOAuthToken;
+
+            if (isCurrentRequest)
+            {
+                self->sendingGif_ = false;
+            }
             if (error.secondsUntilCanSend > 0)
             {
-                self->gifCooldownUntil_ =
-                    QDateTime::currentDateTimeUtc().addSecs(
-                        error.secondsUntilCanSend);
+                self->gifCooldowns_.insert(
+                    cooldownKey, QDateTime::currentDateTimeUtc().addSecs(
+                                     error.secondsUntilCanSend));
                 error.message =
                     QStringLiteral("Rate limited; try again in %1 seconds")
                         .arg(error.secondsUntilCanSend);
             }
-            if (error.message.contains("permission", Qt::CaseInsensitive) ||
-                error.message.contains("eligible", Qt::CaseInsensitive))
+            if (isCurrentContext &&
+                (error.message.contains("permission", Qt::CaseInsensitive) ||
+                 error.message.contains("eligible", Qt::CaseInsensitive)))
             {
                 self->gifsAvailable_ = false;
             }
-            self->updateGifButton();
-            if (auto *popup = self->gifPickerPopup_.data())
+            if (isCurrentRequest)
             {
-                popup->showMessage(QStringLiteral("Unable to send GIF."));
+                self->updateGifButton();
+            }
+            if (isCurrentContext)
+            {
+                if (auto *popup = self->gifPickerPopup_.data())
+                {
+                    popup->showMessage(QStringLiteral("Unable to send GIF."));
+                }
             }
             if (const auto locked = weakChannel.lock())
             {
                 if (error.message.contains("token", Qt::CaseInsensitive) ||
-                    error.message.contains("unauthorized",
-                                           Qt::CaseInsensitive))
+                    error.message.contains("unauthorized", Qt::CaseInsensitive))
                 {
                     error.message += QStringLiteral(
                         ". Sign in again in Settings > Accounts");

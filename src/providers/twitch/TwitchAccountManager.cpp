@@ -289,6 +289,22 @@ std::shared_ptr<TwitchAccount> TwitchAccountManager::findUserByUsername(
     return nullptr;
 }
 
+std::shared_ptr<TwitchAccount> TwitchAccountManager::findUserByUserID(
+    const QString &userID) const
+{
+    std::lock_guard<std::mutex> lock(this->mutex_);
+
+    for (const auto &user : this->accounts)
+    {
+        if (userID == user->getUserId())
+        {
+            return user;
+        }
+    }
+
+    return nullptr;
+}
+
 bool TwitchAccountManager::userExists(const QString &username) const
 {
     return this->findUserByUsername(username) != nullptr;
@@ -482,10 +498,22 @@ bool TwitchAccountManager::removeUser(TwitchAccount *account)
 TwitchAccountManager::AddUserResponse TwitchAccountManager::addUser(
     const TwitchAccountManager::UserData &userData)
 {
-    auto previousUser = this->findUserByUsername(userData.username);
+    auto previousUser = this->findUserByUserID(userData.userID);
     if (previousUser)
     {
         bool userUpdated = false;
+
+        const auto oldUsername = previousUser->getUserName();
+        if (previousUser->setUserName(userData.username))
+        {
+            if (oldUsername.compare(this->currentUsername.getValue(),
+                                    Qt::CaseInsensitive) == 0)
+            {
+                this->currentUsername = userData.username;
+            }
+            this->currentUserNameChanged.invoke();
+            userUpdated = true;
+        }
 
         if (previousUser->setOAuthClient(userData.clientID))
         {

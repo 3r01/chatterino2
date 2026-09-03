@@ -6,20 +6,53 @@
     let integrityAuthorization = "";
     let integrityRefreshTimer = 0;
     let integrityRequest = null;
-    const clientVersion = window.fetch("https://www.twitch.tv/", {
-        credentials: "omit", cache: "no-store"
-    }).then(response => {
-        if (!response.ok) {
-            throw new Error(`Twitch version request failed (${response.status})`);
+    let clientVersion = "";
+    let clientVersionExpiresAt = 0;
+    let clientVersionRequest = null;
+
+    const getClientVersion = async (force = false) => {
+        const now = Date.now();
+        if (!force && clientVersion && now < clientVersionExpiresAt) {
+            return clientVersion;
         }
-        return response.text();
-    }).then(html => {
-        const match = html.match(/__twilightBuildID\s*=\s*["']([^"']+)/);
-        if (!match) {
-            throw new Error("Twitch returned no client version");
+        if (clientVersionRequest) {
+            return clientVersionRequest;
         }
-        return match[1];
-    });
+
+        const request = (async () => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000);
+            try {
+                const response = await window.fetch("https://www.twitch.tv/", {
+                    credentials: "omit", cache: "no-store",
+                    signal: controller.signal
+                });
+                if (!response.ok) {
+                    throw new Error(
+                        `Twitch version request failed (${response.status})`);
+                }
+                const html = await response.text();
+                const match = html.match(
+                    /__twilightBuildID\s*=\s*["']([^"']+)/);
+                if (!match) {
+                    throw new Error("Twitch returned no client version");
+                }
+                clientVersion = match[1];
+                clientVersionExpiresAt = Date.now() + (15 * 60 * 1000);
+                return clientVersion;
+            } finally {
+                clearTimeout(timeout);
+            }
+        })();
+        clientVersionRequest = request;
+        try {
+            return await request;
+        } finally {
+            if (clientVersionRequest === request) {
+                clientVersionRequest = null;
+            }
+        }
+    };
     const send = value => {
         const message = JSON.stringify(value);
         if (window.chrome?.webview) {
@@ -47,7 +80,12 @@
             return integrityToken;
         }
         if (integrityRequest) {
-            return integrityRequest;
+            try {
+                await integrityRequest;
+            } catch (_) {
+                // The caller below will retry for its own authorization.
+            }
+            return acquireIntegrity(config, force);
         }
 
         const request = (async () => {
@@ -94,7 +132,7 @@
         try {
             const headers = {
                 ...config.headers,
-                "Client-Version": await clientVersion
+                "Client-Version": await getClientVersion()
             };
             const integrityConfig = {
                 authorization: config.authorization,
@@ -113,6 +151,8 @@
             });
             const body = await response.text();
             if (retry && /failed integrity check/i.test(body)) {
+                clientVersion = "";
+                clientVersionExpiresAt = 0;
                 await acquireIntegrity(integrityConfig, true);
                 return execute(config, false);
             }

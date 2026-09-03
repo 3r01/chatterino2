@@ -128,9 +128,11 @@ TwitchGifPickerPopup::TwitchGifPickerPopup(QWidget *parent)
     auto search = layout.emplace<QLineEdit>().assign(&this->searchInput_);
     search->setPlaceholderText(QStringLiteral("Search GIFs"));
     search->hide();
+    this->searchInput_->installEventFilter(this);
     layout.emplace<GenericListView>().assign(&this->listView_);
     this->listView_->setModel(&this->model_);
     this->listView_->setInvokeActionOnTab(false);
+    this->listView_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     this->resizeToFit(440);
 
     QObject::connect(this->searchInput_, &QLineEdit::textChanged, this,
@@ -175,11 +177,13 @@ void TwitchGifPickerPopup::updateSearch(const QString &query,
     this->searchInput_->hide();
     this->resizeToFit(this->width());
     this->query_ = query;
-    if (this->channelID_ != channelID || this->webOAuthToken_ != webOAuthToken)
+    this->setContext(channelID, webOAuthToken);
+    if (this->configState_ == ConfigState::Loading)
     {
-        this->channelID_ = channelID;
-        this->webOAuthToken_ = webOAuthToken;
-        this->config_.reset();
+        return;
+    }
+    if (this->configState_ != ConfigState::Loaded)
+    {
         ++this->requestVersion_;
         this->loadConfig();
         return;
@@ -201,13 +205,14 @@ void TwitchGifPickerPopup::openPicker(const QString &channelID,
     this->searchInput_->show();
     this->searchInput_->clear();
     this->query_.clear();
+    this->setContext(channelID, webOAuthToken);
 
-    if (this->channelID_ != channelID ||
-        this->webOAuthToken_ != webOAuthToken || !this->config_)
+    if (this->configState_ == ConfigState::Loading)
     {
-        this->channelID_ = channelID;
-        this->webOAuthToken_ = webOAuthToken;
-        this->config_.reset();
+        return;
+    }
+    if (this->configState_ != ConfigState::Loaded)
+    {
         ++this->requestVersion_;
         this->loadConfig();
     }
@@ -218,24 +223,18 @@ void TwitchGifPickerPopup::openPicker(const QString &channelID,
     }
 }
 
-void TwitchGifPickerPopup::prepare(const QString &channelID,
-                                   const QString &webOAuthToken,
-                                   AvailabilityCallback callback,
-                                   bool forceRefresh)
+void TwitchGifPickerPopup::setContext(const QString &channelID,
+                                      const QString &webOAuthToken)
 {
-    this->availabilityCallback_ = std::move(callback);
-    if (!forceRefresh && this->channelID_ == channelID &&
-        this->webOAuthToken_ == webOAuthToken && this->config_)
+    if (this->channelID_ == channelID && this->webOAuthToken_ == webOAuthToken)
     {
-        this->notifyAvailability();
         return;
     }
-
     this->channelID_ = channelID;
     this->webOAuthToken_ = webOAuthToken;
     this->config_.reset();
+    this->configState_ = ConfigState::Unloaded;
     ++this->requestVersion_;
-    this->loadConfig();
 }
 
 void TwitchGifPickerPopup::resizeToFit(int availableWidth)
@@ -302,6 +301,11 @@ void TwitchGifPickerPopup::themeChangedEvent()
 
 void TwitchGifPickerPopup::loadConfig()
 {
+    if (this->configState_ == ConfigState::Loading)
+    {
+        return;
+    }
+    this->configState_ = ConfigState::Loading;
     this->searchTimer_.stop();
     this->showStatus(QStringLiteral("Checking GIF availability..."));
     const auto version = this->requestVersion_;
@@ -313,7 +317,7 @@ void TwitchGifPickerPopup::loadConfig()
                 return;
             }
             this->config_ = std::move(config);
-            this->notifyAvailability();
+            this->configState_ = ConfigState::Loaded;
             if (!this->isAvailable())
             {
                 this->showStatus(
@@ -326,7 +330,7 @@ void TwitchGifPickerPopup::loadConfig()
             if (version == this->requestVersion_)
             {
                 this->config_.reset();
-                this->notifyAvailability();
+                this->configState_ = ConfigState::Failed;
                 if (error.contains("token", Qt::CaseInsensitive) ||
                     error.contains("unauthorized", Qt::CaseInsensitive))
                 {
@@ -372,18 +376,6 @@ bool TwitchGifPickerPopup::isAvailable() const
            !this->config_->apiKey.isEmpty();
 }
 
-void TwitchGifPickerPopup::notifyAvailability()
-{
-    if (this->availabilityCallback_)
-    {
-        this->availabilityCallback_(this->isAvailable());
-    }
-    if (this->isAvailable())
-    {
-        twitchgifs::warmGifIntegritySession();
-    }
-}
-
 void TwitchGifPickerPopup::showStatus(const QString &text)
 {
     this->model_.clear();
@@ -402,7 +394,7 @@ void TwitchGifPickerPopup::showResults(
         return;
     }
 
-    const auto count = std::min<size_t>(results.size(), MAX_VISIBLE_RESULTS);
+    const auto count = results.size();
     for (auto i = count; i > 0; --i)
     {
         this->model_.addItem(std::make_unique<GifPickerItem>(
@@ -410,7 +402,8 @@ void TwitchGifPickerPopup::showResults(
     }
     this->listView_->setCurrentIndex(this->model_.index(int(count - 1)));
     this->listView_->scrollToBottom();
-    this->resizeForContent(int(count) * ITEM_HEIGHT);
+    this->resizeForContent(int(std::min<size_t>(count, MAX_VISIBLE_RESULTS)) *
+                           ITEM_HEIGHT);
 }
 
 }  // namespace chatterino

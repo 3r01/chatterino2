@@ -9,6 +9,7 @@
 #include "controllers/accounts/AccountModel.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchCommon.hpp"
+#include "util/Clipboard.hpp"
 #include "util/LayoutCreator.hpp"
 #include "widgets/dialogs/LoginDialog.hpp"
 #include "widgets/dialogs/TwitchWebLoginDialog.hpp"
@@ -18,6 +19,7 @@
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QTableView>
 #include <QVBoxLayout>
@@ -65,12 +67,34 @@ AccountsPage::AccountsPage()
 
     auto *signIn = new QPushButton("Sign in with Twitch", historyGroup);
     historyLayout->addWidget(signIn);
+
+    auto *manualDescription = new QLabel(
+        "If the sign-in window is unavailable, copy the auth-token cookie "
+        "from a signed-in twitch.tv browser session and paste it here.",
+        historyGroup);
+    manualDescription->setWordWrap(true);
+    historyLayout->addWidget(manualDescription);
+
+    auto *tokenRow = new QHBoxLayout;
+    auto *tokenInput = new QLineEdit(historyGroup);
+    tokenInput->setEchoMode(QLineEdit::Password);
+    tokenInput->setPlaceholderText("Twitch auth-token cookie");
+    tokenRow->addWidget(tokenInput);
+    auto *saveToken = new QPushButton("Save token", historyGroup);
+    auto *clearToken = new QPushButton("Clear token", historyGroup);
+    tokenRow->addWidget(saveToken);
+    tokenRow->addWidget(clearToken);
+    historyLayout->addLayout(tokenRow);
     layout->addWidget(historyGroup);
 
     const auto updateHistoryControls = [=] {
         const auto account = app->getAccounts()->twitch.getCurrent();
         const auto available = account && !account->isAnon();
         signIn->setEnabled(available);
+        tokenInput->setEnabled(available);
+        saveToken->setEnabled(available);
+        clearToken->setEnabled(available &&
+                               !account->getWebOAuthToken().isEmpty());
 
         if (!available)
         {
@@ -120,6 +144,31 @@ AccountsPage::AccountsPage()
                 updateHistoryControls();
             });
         });
+
+    QObject::connect(saveToken, &QPushButton::clicked, this, [=] {
+        auto token = tokenInput->text().trimmed();
+        if (token.startsWith("auth-token=", Qt::CaseInsensitive))
+        {
+            token.remove(0, 11);
+        }
+        if (token.startsWith("oauth:", Qt::CaseInsensitive))
+        {
+            token.remove(0, 6);
+        }
+        token = token.trimmed();
+        if (token.isEmpty())
+        {
+            return;
+        }
+        app->getAccounts()->twitch.setCurrentWebOAuthToken(token);
+        tokenInput->clear();
+        crossPlatformCopy({});
+        updateHistoryControls();
+    });
+    QObject::connect(clearToken, &QPushButton::clicked, this, [=] {
+        app->getAccounts()->twitch.setCurrentWebOAuthToken({});
+        updateHistoryControls();
+    });
 
     this->managedConnections_.managedConnect(
         app->getAccounts()->twitch.currentUserChanged, updateHistoryControls);

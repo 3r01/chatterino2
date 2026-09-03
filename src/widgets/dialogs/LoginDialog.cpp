@@ -11,6 +11,7 @@
 #include "controllers/accounts/AccountController.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "singletons/Settings.hpp"
+#include "util/Clipboard.hpp"
 #include "util/Helpers.hpp"
 #include "widgets/dialogs/TwitchWebLoginDialog.hpp"
 
@@ -19,7 +20,9 @@
 #endif
 
 #include <QDebug>
+#include <QDesktopServices>
 #include <QMessageBox>
+#include <QUrl>
 
 namespace chatterino {
 
@@ -61,7 +64,7 @@ bool logInWithCredentials(QWidget *parent, const QString &userID,
     auto &accounts = getApp()->getAccounts()->twitch;
     if (webOAuthToken.isEmpty())
     {
-        const auto existing = accounts.findUserByUsername(username);
+        const auto existing = accounts.findUserByUserID(userID);
         if (existing)
         {
             webOAuthToken = existing->getWebOAuthToken();
@@ -82,13 +85,29 @@ bool logInWithCredentials(QWidget *parent, const QString &userID,
 
 BasicLoginWidget::BasicLoginWidget()
 {
+    const QUrl loginUrl{QStringLiteral("https://chatterino.com/client_login")};
     this->setLayout(&this->ui_.layout);
 
     this->ui_.loginButton.setText("Sign in with Twitch");
 
     this->ui_.horizontalLayout.addWidget(&this->ui_.loginButton);
-
     this->ui_.layout.addLayout(&this->ui_.horizontalLayout);
+
+    this->ui_.browserLoginButton.setText("Open sign-in in browser");
+    this->ui_.pasteCodeButton.setText("Paste login info");
+    this->ui_.fallbackLayout.addWidget(&this->ui_.browserLoginButton);
+    this->ui_.fallbackLayout.addWidget(&this->ui_.pasteCodeButton);
+    this->ui_.layout.addLayout(&this->ui_.fallbackLayout);
+
+    this->ui_.unableToOpenBrowserHelper.setWordWrap(true);
+    this->ui_.unableToOpenBrowserHelper.setOpenExternalLinks(true);
+    this->ui_.unableToOpenBrowserHelper.setText(
+        QStringLiteral("Unable to open <a href=\"%1\">the Twitch sign-in "
+                       "page</a>. Open it manually, then use Paste login "
+                       "info.")
+            .arg(loginUrl.toString()));
+    this->ui_.unableToOpenBrowserHelper.hide();
+    this->ui_.layout.addWidget(&this->ui_.unableToOpenBrowserHelper);
 
     connect(&this->ui_.loginButton, &QPushButton::clicked, [this]() {
         openTwitchWebLogin(this, [this](TwitchWebCredentials credentials) {
@@ -100,6 +119,55 @@ BasicLoginWidget::BasicLoginWidget()
                 this->window()->close();
             }
         });
+    });
+
+    connect(&this->ui_.browserLoginButton, &QPushButton::clicked,
+            [this, loginUrl]() {
+                if (!QDesktopServices::openUrl(loginUrl))
+                {
+                    this->ui_.unableToOpenBrowserHelper.show();
+                }
+            });
+
+    connect(&this->ui_.pasteCodeButton, &QPushButton::clicked, [this]() {
+        const auto parameters = getClipboardText().split(u';');
+        crossPlatformCopy({});
+
+        QString oauthToken;
+        QString clientID;
+        QString username;
+        QString userID;
+        for (const auto &parameter : parameters)
+        {
+            const auto separator = parameter.indexOf(u'=');
+            if (separator < 0)
+            {
+                continue;
+            }
+            const auto key = parameter.left(separator);
+            const auto value = parameter.sliced(separator + 1);
+            if (key == u"oauth_token")
+            {
+                oauthToken = value;
+            }
+            else if (key == u"client_id")
+            {
+                clientID = value;
+            }
+            else if (key == u"username")
+            {
+                username = value;
+            }
+            else if (key == u"user_id")
+            {
+                userID = value;
+            }
+        }
+
+        if (logInWithCredentials(this, userID, username, clientID, oauthToken))
+        {
+            this->window()->close();
+        }
     });
 }
 

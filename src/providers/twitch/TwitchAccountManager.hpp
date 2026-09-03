@@ -51,6 +51,8 @@ public:
 
     std::shared_ptr<TwitchAccount> findUserByUsername(
         const QString &username) const;
+    std::shared_ptr<TwitchAccount> findUserByUserID(
+        const QString &userID) const;
     bool userExists(const QString &username) const;
 
     void reloadUsers();

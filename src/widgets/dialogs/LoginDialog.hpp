@@ -31,7 +31,11 @@ public:
     struct {
         QVBoxLayout layout;
         QHBoxLayout horizontalLayout;
+        QHBoxLayout fallbackLayout;
         QPushButton loginButton;
+        QPushButton browserLoginButton;
+        QPushButton pasteCodeButton;
+        QLabel unableToOpenBrowserHelper;
     } ui_;
 };
 

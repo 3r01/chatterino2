@@ -4,9 +4,9 @@
 
 #include "providers/twitch/api/TwitchGifs.hpp"
 
-#include "common/QLogging.hpp"
 #include "common/network/NetworkRequest.hpp"
 #include "common/network/NetworkResult.hpp"
+#include "common/QLogging.hpp"
 #include "providers/twitch/api/TwitchIntegrity.hpp"
 
 #include <QJsonArray>
@@ -83,10 +83,8 @@ QString gqlError(const QJsonObject &root)
         const auto extensions = error.value("extensions").toObject();
         if (!extensions.isEmpty())
         {
-            message += QStringLiteral(" (%1)")
-                           .arg(QString::fromUtf8(
-                               QJsonDocument{extensions}.toJson(
-                                   QJsonDocument::Compact)));
+            message += QStringLiteral(" (%1)").arg(QString::fromUtf8(
+                QJsonDocument{extensions}.toJson(QJsonDocument::Compact)));
         }
         messages.emplace_back(std::move(message));
     }
@@ -110,7 +108,8 @@ bool isPickerRating(QStringView rating)
 {
     return rating.compare(u"y", Qt::CaseInsensitive) == 0 ||
            rating.compare(u"g", Qt::CaseInsensitive) == 0 ||
-           rating.compare(u"pg", Qt::CaseInsensitive) == 0;
+           rating.compare(u"pg", Qt::CaseInsensitive) == 0 ||
+           rating.compare(u"pg-13", Qt::CaseInsensitive) == 0;
 }
 
 const QString &giphyPingbackID()
@@ -296,8 +295,7 @@ void send(const QString &channelID, const QString &gifID, const QString &gifURL,
     sendGifWithIntegrity(
         input, webOAuthToken, caller,
         [onSuccess = std::move(onSuccess),
-         onError = std::move(responseError)](
-            const QJsonObject &root) mutable {
+         onError = std::move(responseError)](const QJsonObject &root) mutable {
             if (const auto error = gqlError(root); !error.isEmpty())
             {
                 onError({.message = error});
@@ -309,8 +307,8 @@ void send(const QString &channelID, const QString &gifID, const QString &gifURL,
                                     .toObject();
             if (result.isEmpty())
             {
-                onError({.message =
-                             QStringLiteral("Twitch rejected the GIF request")});
+                onError({.message = QStringLiteral(
+                             "Twitch rejected the GIF request")});
                 return;
             }
             if (const auto error = result.value("error").toString();

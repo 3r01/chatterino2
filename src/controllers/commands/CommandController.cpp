@@ -534,6 +534,20 @@ CommandModel *CommandController::createModel(QObject *parent)
     return model;
 }
 
+bool CommandController::hasUserOrPluginCommand(QStringView commandName) const
+{
+    const auto name = commandName.toString();
+    if (this->userCommands_.contains(name))
+    {
+        return true;
+    }
+#ifdef CHATTERINO_HAVE_PLUGINS
+    return this->pluginCommands_.contains(name);
+#else
+    return false;
+#endif
+}
+
 QString CommandController::execCommand(const QString &textNoEmoji,
                                        ChannelPtr channel, bool dryRun)
 {

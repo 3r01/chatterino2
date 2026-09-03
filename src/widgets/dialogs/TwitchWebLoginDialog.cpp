@@ -7,12 +7,16 @@
 #include "common/network/NetworkRequest.hpp"
 #include "common/network/NetworkResult.hpp"
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QEvent>
+#include <QFileInfo>
 #include <QLabel>
 #include <QPointer>
+#include <QPushButton>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -27,6 +31,7 @@
 #    include <wrl.h>
 #endif
 
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -39,6 +44,83 @@ namespace {
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
+constexpr auto LOGIN_PROFILE_PREFIX = "chatterino-twitch-login-";
+
+void removeProfileWithRetries(QString path, int retries = 20)
+{
+    if (!QFileInfo::exists(path) || QDir{path}.removeRecursively())
+    {
+        return;
+    }
+    if (retries <= 0)
+    {
+        return;
+    }
+    QTimer::singleShot(500, QCoreApplication::instance(),
+                       [path = std::move(path), retries] {
+                           removeProfileWithRetries(path, retries - 1);
+                       });
+}
+
+void removeAbandonedLoginProfiles()
+{
+    const QDir temporaryDirectory{QDir::tempPath()};
+    const auto cutoff = QDateTime::currentDateTimeUtc().addDays(-1);
+    const auto entries = temporaryDirectory.entryInfoList(
+        {QString::fromLatin1(LOGIN_PROFILE_PREFIX) + u'*'},
+        QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const auto &entry : entries)
+    {
+        if (entry.lastModified().toUTC() < cutoff)
+        {
+            removeProfileWithRetries(entry.absoluteFilePath());
+        }
+    }
+}
+
+struct ProfileCleanupState {
+    ComPtr<ICoreWebView2Environment5> environment;
+    EventRegistrationToken processExitedToken{};
+    QString path;
+    bool uninitializeCom{};
+};
+
+bool removeProfileAfterBrowserExit(
+    const ComPtr<ICoreWebView2Environment> &environment, const QString &path,
+    bool uninitializeCom)
+{
+    auto state = std::make_shared<ProfileCleanupState>();
+    if (FAILED(environment.As(&state->environment)))
+    {
+        return false;
+    }
+    state->path = path;
+    state->uninitializeCom = uninitializeCom;
+    const auto result = state->environment->add_BrowserProcessExited(
+        Callback<ICoreWebView2BrowserProcessExitedEventHandler>(
+            [state](ICoreWebView2Environment *,
+                    ICoreWebView2BrowserProcessExitedEventArgs *) -> HRESULT {
+                state->environment->remove_BrowserProcessExited(
+                    state->processExitedToken);
+                state->environment.Reset();
+                const auto path = std::move(state->path);
+                const auto uninitializeCom = state->uninitializeCom;
+                state->uninitializeCom = false;
+                QTimer::singleShot(0, QCoreApplication::instance(),
+                                   [path, uninitializeCom] {
+                                       removeProfileWithRetries(path);
+                                       if (uninitializeCom)
+                                       {
+                                           CoUninitialize();
+                                       }
+                                   });
+                return S_OK;
+            })
+            .Get(),
+        &state->processExitedToken);
+    return SUCCEEDED(result);
+}
+
 class TwitchWebLoginDialog final : public QDialog
 {
 public:
@@ -49,6 +131,7 @@ public:
               QStringLiteral("chatterino-twitch-login-%1")
                   .arg(QUuid::createUuid().toString(QUuid::Id128))))
     {
+        removeAbandonedLoginProfiles();
         this->setAttribute(Qt::WA_DeleteOnClose);
         this->setWindowTitle(QStringLiteral("Sign in with Twitch"));
         this->resize(900, 700);
@@ -67,6 +150,13 @@ public:
         layout->addWidget(this->host_, 1);
 
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+        this->resetButton_ =
+            buttons->addButton("Start over", QDialogButtonBox::ResetRole);
+        this->resetButton_->hide();
+        QObject::connect(this->resetButton_, &QPushButton::clicked, this,
+                         [this] {
+                             this->resetAuthentication();
+                         });
         QObject::connect(buttons, &QDialogButtonBox::rejected, this,
                          &QDialog::reject);
         layout->addWidget(buttons);
@@ -83,6 +173,12 @@ public:
 
     ~TwitchWebLoginDialog() override
     {
+        this->cookiePoll_.stop();
+        const auto cleanupAfterExit =
+            this->environment_ && this->controller_ &&
+            removeProfileAfterBrowserExit(this->environment_,
+                                          this->userDataDirectory_,
+                                          this->comInitialized_);
         if (this->controller_)
         {
             this->controller_->Close();
@@ -90,11 +186,15 @@ public:
         this->webView_.Reset();
         this->controller_.Reset();
         this->environment_.Reset();
-        QDir{this->userDataDirectory_}.removeRecursively();
-        if (this->comInitialized_)
+        if (!cleanupAfterExit)
         {
-            CoUninitialize();
+            removeProfileWithRetries(this->userDataDirectory_);
+            if (this->comInitialized_)
+            {
+                CoUninitialize();
+            }
         }
+        this->comInitialized_ = false;
     }
 
 protected:
@@ -337,52 +437,76 @@ private:
     void validateChatToken(const QString &token)
     {
         if (this->validatingChatToken_ || !this->chatToken_.isEmpty() ||
-            token == this->lastRejectedChatToken_)
+            token == this->lastRejectedChatToken_ ||
+            this->nextChatValidation_ > QDateTime::currentDateTimeUtc())
         {
             return;
         }
         this->validatingChatToken_ = true;
+        const auto generation = this->authGeneration_;
         this->status_->setText(QStringLiteral("Finishing account setup..."));
         const QPointer self{this};
         NetworkRequest("https://id.twitch.tv/oauth2/validate")
             .header("Authorization", "OAuth " + token)
             .timeout(20000)
             .caller(this)
-            .onSuccess([self, token](const NetworkResult &result) mutable {
-                if (!self)
-                {
-                    return;
-                }
-                const auto json = result.parseJson();
-                TwitchWebCredentials credentials{
-                    .username = json.value("login").toString(),
-                    .userID = json.value("user_id").toString(),
-                    .clientID = json.value("client_id").toString(),
-                    .oauthToken = std::move(token),
-                };
-                if (credentials.username.isEmpty() ||
-                    credentials.userID.isEmpty() ||
-                    credentials.clientID.isEmpty())
-                {
+            .onSuccess(
+                [self, token, generation](const NetworkResult &result) mutable {
+                    if (!self || self->authGeneration_ != generation)
+                    {
+                        return;
+                    }
+                    const auto json = result.parseJson();
+                    TwitchWebCredentials credentials{
+                        .username = json.value("login").toString(),
+                        .userID = json.value("user_id").toString(),
+                        .clientID = json.value("client_id").toString(),
+                        .oauthToken = std::move(token),
+                    };
+                    if (credentials.username.isEmpty() ||
+                        credentials.userID.isEmpty() ||
+                        credentials.clientID.isEmpty())
+                    {
+                        self->validatingChatToken_ = false;
+                        self->showError(QStringLiteral(
+                            "Twitch returned incomplete account information."));
+                        return;
+                    }
+                    self->chatToken_ = credentials.oauthToken;
+                    self->credentials_ = std::move(credentials);
                     self->validatingChatToken_ = false;
-                    self->showError(QStringLiteral(
-                        "Twitch returned incomplete account information."));
-                    return;
-                }
-                self->chatToken_ = credentials.oauthToken;
-                self->credentials_ = std::move(credentials);
-                self->validatingChatToken_ = false;
-                self->finishIfReady();
-            })
-            .onError([self, token](const NetworkResult &) {
-                if (!self)
+                    self->finishIfReady();
+                })
+            .onError([self, token, generation](const NetworkResult &result) {
+                if (!self || self->authGeneration_ != generation)
                 {
                     return;
                 }
                 self->validatingChatToken_ = false;
-                self->lastRejectedChatToken_ = token;
-                self->showError(QStringLiteral("Twitch rejected the Chatterino "
-                                               "authorization. Try again."));
+                const auto status = result.status();
+                if (status == 401 || status == 403)
+                {
+                    self->lastRejectedChatToken_ = token;
+                    self->showError(QStringLiteral(
+                        "Twitch rejected the Chatterino authorization. Start "
+                        "over and try again."));
+                    self->resetButton_->show();
+                }
+                else
+                {
+                    self->nextChatValidation_ =
+                        QDateTime::currentDateTimeUtc().addSecs(5);
+                    self->showError(
+                        QStringLiteral("Could not validate the Chatterino "
+                                       "authorization (%1). Retrying...")
+                            .arg(result.formatError()));
+                    QTimer::singleShot(5100, self, [self, token, generation] {
+                        if (self && self->authGeneration_ == generation)
+                        {
+                            self->validateChatToken(token);
+                        }
+                    });
+                }
             })
             .execute();
     }
@@ -390,18 +514,21 @@ private:
     void validateWebToken(const QString &token)
     {
         if (this->validatingWebToken_ || !this->webToken_.isEmpty() ||
-            token == this->lastRejectedWebToken_)
+            token == this->lastRejectedWebToken_ ||
+            this->nextWebValidation_ > QDateTime::currentDateTimeUtc())
         {
             return;
         }
         this->validatingWebToken_ = true;
+        const auto generation = this->authGeneration_;
         const QPointer self{this};
         NetworkRequest("https://id.twitch.tv/oauth2/validate")
             .header("Authorization", "OAuth " + token)
             .timeout(20000)
             .caller(this)
-            .onSuccess([self, token](const NetworkResult &result) mutable {
-                if (!self)
+            .onSuccess([self, token,
+                        generation](const NetworkResult &result) mutable {
+                if (!self || self->authGeneration_ != generation)
                 {
                     return;
                 }
@@ -419,16 +546,30 @@ private:
                 self->validatingWebToken_ = false;
                 self->finishIfReady();
             })
-            .onError([self, token](const NetworkResult &) {
-                if (!self)
+            .onError([self, token, generation](const NetworkResult &result) {
+                if (!self || self->authGeneration_ != generation)
                 {
                     return;
                 }
                 self->validatingWebToken_ = false;
-                self->lastRejectedWebToken_ = token;
-                self->showError(
-                    QStringLiteral("Twitch rejected the web sign-in. Sign out "
-                                   "and try again."));
+                const auto status = result.status();
+                if (status == 401 || status == 403)
+                {
+                    self->lastRejectedWebToken_ = token;
+                    self->showError(QStringLiteral(
+                        "Twitch rejected the web sign-in. Start over and try "
+                        "again."));
+                    self->resetButton_->show();
+                }
+                else
+                {
+                    self->nextWebValidation_ =
+                        QDateTime::currentDateTimeUtc().addSecs(5);
+                    self->showError(
+                        QStringLiteral("Could not validate the Twitch web "
+                                       "sign-in (%1). Retrying...")
+                            .arg(result.formatError()));
+                }
             })
             .execute();
     }
@@ -443,7 +584,9 @@ private:
         {
             this->showError(QStringLiteral(
                 "The Chatterino authorization and Twitch web sign-in belong "
-                "to different accounts. Sign out and try again."));
+                "to different accounts. Start over and sign in to the same "
+                "account."));
+            this->resetButton_->show();
             return;
         }
 
@@ -459,6 +602,39 @@ private:
         this->status_->setText(message);
     }
 
+    void resetAuthentication()
+    {
+        ++this->authGeneration_;
+        this->credentials_.reset();
+        this->chatToken_.clear();
+        this->webToken_.clear();
+        this->webUserID_.clear();
+        this->lastRejectedChatToken_.clear();
+        this->lastRejectedWebToken_.clear();
+        this->nextChatValidation_ = {};
+        this->nextWebValidation_ = {};
+        this->validatingChatToken_ = false;
+        this->validatingWebToken_ = false;
+        this->resetButton_->hide();
+
+        ComPtr<ICoreWebView2_2> webView2;
+        ComPtr<ICoreWebView2CookieManager> cookieManager;
+        if (this->webView_ && SUCCEEDED(this->webView_.As(&webView2)) &&
+            SUCCEEDED(webView2->get_CookieManager(
+                cookieManager.ReleaseAndGetAddressOf())))
+        {
+            cookieManager->DeleteCookies(L"auth-token",
+                                         L"https://www.twitch.tv/");
+        }
+        this->status_->setText(QStringLiteral(
+            "Sign in to Twitch. Chatterino will finish setting up the account "
+            "automatically."));
+        if (this->webView_)
+        {
+            this->webView_->Navigate(L"https://chatterino.com/client_login");
+        }
+    }
+
     TwitchWebLoginCallback onSuccess_;
     QString userDataDirectory_;
     std::optional<TwitchWebCredentials> credentials_;
@@ -467,7 +643,10 @@ private:
     QString webUserID_;
     QString lastRejectedChatToken_;
     QString lastRejectedWebToken_;
+    QDateTime nextChatValidation_;
+    QDateTime nextWebValidation_;
     QLabel *status_{};
+    QPushButton *resetButton_{};
     QWidget *host_{};
     QTimer cookiePoll_;
     ComPtr<ICoreWebView2Environment> environment_;
@@ -476,6 +655,7 @@ private:
     bool comInitialized_{};
     bool validatingChatToken_{};
     bool validatingWebToken_{};
+    quint64 authGeneration_{};
 };
 
 }  // namespace

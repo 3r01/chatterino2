@@ -51,11 +51,15 @@ struct PendingRequest {
 class TwitchIntegritySession final : public QObject
 {
 public:
+    enum class State {
+        Idle,
+        Starting,
+        Ready,
+        Failed,
+    };
+
     explicit TwitchIntegritySession(QObject *parent)
         : QObject(parent)
-        , userDataDirectory_(QDir::temp().filePath(
-              QStringLiteral("chatterino-twci-%1")
-                  .arg(QUuid::createUuid().toString(QUuid::Id128))))
     {
         this->startupTimeout_.setSingleShot(true);
         this->startupTimeout_.setInterval(60000);
@@ -93,7 +97,7 @@ public:
 
     void warm()
     {
-        if (!this->started_)
+        if (this->state_ == State::Idle)
         {
             this->start();
         }
@@ -103,6 +107,10 @@ public:
                  const QObject *caller, IntegritySuccessCallback onSuccess,
                  IntegrityErrorCallback onError)
     {
+        if (this->state_ == State::Failed)
+        {
+            this->resetSession();
+        }
         this->queue_.push_back({
             .input = std::move(input),
             .webOAuthToken = std::move(webOAuthToken),
@@ -118,7 +126,11 @@ public:
 private:
     void start()
     {
-        this->started_ = true;
+        this->state_ = State::Starting;
+        const auto generation = ++this->generation_;
+        this->userDataDirectory_ = QDir::temp().filePath(
+            QStringLiteral("chatterino-twci-%1")
+                .arg(QUuid::createUuid().toString(QUuid::Id128)));
         const auto result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(result) && result != RPC_E_CHANGED_MODE)
         {
@@ -149,10 +161,10 @@ private:
             nullptr, profile.c_str(), nullptr,
             Callback<
                 ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-                [self, window](
+                [self, window, generation](
                     HRESULT result,
                     ICoreWebView2Environment *environment) -> HRESULT {
-                    if (!self)
+                    if (!self || self->generation_ != generation)
                     {
                         return S_OK;
                     }
@@ -167,10 +179,10 @@ private:
                         window,
                         Callback<
                             ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                            [self](HRESULT controllerResult,
-                                   ICoreWebView2Controller *controller)
-                                -> HRESULT {
-                                if (!self)
+                            [self, generation](HRESULT controllerResult,
+                                               ICoreWebView2Controller
+                                                   *controller) -> HRESULT {
+                                if (!self || self->generation_ != generation)
                                 {
                                     return S_OK;
                                 }
@@ -183,7 +195,7 @@ private:
                                     return S_OK;
                                 }
                                 self->controller_ = controller;
-                                self->initializeController();
+                                self->initializeController(generation);
                                 return S_OK;
                             })
                             .Get());
@@ -197,7 +209,7 @@ private:
         }
     }
 
-    void initializeController()
+    void initializeController(quint64 generation)
     {
         RECT bounds{0, 0, 800, 600};
         this->controller_->put_Bounds(bounds);
@@ -227,10 +239,10 @@ private:
         EventRegistrationToken resourceToken{};
         this->webView_->add_WebResourceRequested(
             Callback<ICoreWebView2WebResourceRequestedEventHandler>(
-                [self](ICoreWebView2 *,
-                       ICoreWebView2WebResourceRequestedEventArgs *args)
-                    -> HRESULT {
-                    if (!self)
+                [self, generation](ICoreWebView2 *,
+                                   ICoreWebView2WebResourceRequestedEventArgs
+                                       *args) -> HRESULT {
+                    if (!self || self->generation_ != generation)
                     {
                         return S_OK;
                     }
@@ -270,10 +282,10 @@ private:
         EventRegistrationToken messageToken{};
         this->webView_->add_WebMessageReceived(
             Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                [self](
+                [self, generation](
                     ICoreWebView2 *,
                     ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
-                    if (!self)
+                    if (!self || self->generation_ != generation)
                     {
                         return S_OK;
                     }
@@ -312,10 +324,10 @@ private:
         EventRegistrationToken navigationToken{};
         this->webView_->add_NavigationCompleted(
             Callback<ICoreWebView2NavigationCompletedEventHandler>(
-                [self](ICoreWebView2 *,
-                       ICoreWebView2NavigationCompletedEventArgs *args)
-                    -> HRESULT {
-                    if (!self)
+                [self, generation](ICoreWebView2 *,
+                                   ICoreWebView2NavigationCompletedEventArgs
+                                       *args) -> HRESULT {
+                    if (!self || self->generation_ != generation)
                     {
                         return S_OK;
                     }
@@ -323,7 +335,7 @@ private:
                     args->get_IsSuccess(&succeeded);
                     if (succeeded)
                     {
-                        self->initializePage();
+                        self->initializePage(generation);
                     }
                     else
                     {
@@ -337,7 +349,7 @@ private:
         this->webView_->Navigate(L"https://www.twitch.tv/");
     }
 
-    void initializePage()
+    void initializePage(quint64 generation)
     {
         const QJsonObject setup{{"kasadaScriptURL", KASADA_SCRIPT_URL}};
         QFile scriptFile(QStringLiteral(":/twitch-integrity.js"));
@@ -356,8 +368,9 @@ private:
         this->webView_->ExecuteScript(
             script.toStdWString().c_str(),
             Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
-                [self](HRESULT result, LPCWSTR) -> HRESULT {
-                    if (self && FAILED(result))
+                [self, generation](HRESULT result, LPCWSTR) -> HRESULT {
+                    if (self && self->generation_ == generation &&
+                        FAILED(result))
                     {
                         self->failAll(QStringLiteral(
                             "Unable to initialize Twitch integrity code"));
@@ -369,7 +382,7 @@ private:
 
     void processNext()
     {
-        if (!this->ready_ || this->current_ || !this->webView_)
+        if (this->state_ != State::Ready || this->current_ || !this->webView_)
         {
             return;
         }
@@ -442,7 +455,7 @@ private:
         if (type == u"ready")
         {
             this->startupTimeout_.stop();
-            this->ready_ = true;
+            this->state_ = State::Ready;
             this->processNext();
             return;
         }
@@ -462,10 +475,25 @@ private:
         {
             return;
         }
+        const auto body = root.value("body").toString();
+        const auto status = root.value("status").toInt();
         if (!root.value("ok").toBool())
         {
             auto errorMessage = root.value("error").toString();
-            if (errorMessage.isEmpty())
+            const auto gqlDocument =
+                QJsonDocument::fromJson(body.toUtf8(), &error);
+            if (error.error == QJsonParseError::NoError &&
+                gqlDocument.isObject())
+            {
+                this->finishSuccess(gqlDocument.object());
+                return;
+            }
+            if (errorMessage.isEmpty() && status > 0)
+            {
+                errorMessage = QStringLiteral("Twitch request failed (HTTP %1)")
+                                   .arg(status);
+            }
+            else if (errorMessage.isEmpty())
             {
                 errorMessage = QStringLiteral("Twitch integrity failed");
             }
@@ -473,8 +501,7 @@ private:
             return;
         }
 
-        const auto gqlDocument = QJsonDocument::fromJson(
-            root.value("body").toString().toUtf8(), &error);
+        const auto gqlDocument = QJsonDocument::fromJson(body.toUtf8(), &error);
         if (error.error != QJsonParseError::NoError || !gqlDocument.isObject())
         {
             this->finishError(
@@ -532,9 +559,10 @@ private:
 
     void failAll(QString error)
     {
+        ++this->generation_;
         this->startupTimeout_.stop();
         this->requestTimeout_.stop();
-        this->ready_ = false;
+        this->state_ = State::Failed;
         if (this->current_)
         {
             auto request = std::move(*this->current_);
@@ -565,6 +593,33 @@ private:
         }
     }
 
+    void resetSession()
+    {
+        ++this->generation_;
+        this->startupTimeout_.stop();
+        this->requestTimeout_.stop();
+        if (this->controller_)
+        {
+            this->controller_->Close();
+        }
+        this->webView_.Reset();
+        this->controller_.Reset();
+        this->environment_.Reset();
+        delete this->host_;
+        this->host_ = nullptr;
+        if (!this->userDataDirectory_.isEmpty())
+        {
+            QDir{this->userDataDirectory_}.removeRecursively();
+            this->userDataDirectory_.clear();
+        }
+        if (this->comInitialized_)
+        {
+            CoUninitialize();
+            this->comInitialized_ = false;
+        }
+        this->state_ = State::Idle;
+    }
+
     QString userDataDirectory_;
     QString deviceID_{QUuid::createUuid().toString(QUuid::Id128)};
     QString sessionID_{QUuid::createUuid().toString(QUuid::Id128)};
@@ -577,8 +632,8 @@ private:
     std::deque<PendingRequest> queue_;
     std::optional<PendingRequest> current_;
     bool comInitialized_{};
-    bool started_{};
-    bool ready_{};
+    State state_{State::Idle};
+    quint64 generation_{};
 };
 
 TwitchIntegritySession *getSession()

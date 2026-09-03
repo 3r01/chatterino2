@@ -9,6 +9,7 @@
 
 #include <pajlada/settings.hpp>
 #include <QMap>
+#include <QStringView>
 
 #include <memory>
 #include <mutex>
@@ -35,6 +36,7 @@ public:
     QString execCommand(const QString &text, std::shared_ptr<Channel> channel,
                         bool dryRun);
     QStringList getDefaultChatterinoCommandList();
+    bool hasUserOrPluginCommand(QStringView commandName) const;
 
     CommandController(const Paths &paths);
     void save();

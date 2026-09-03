@@ -22,7 +22,6 @@ class GenericListView;
 class TwitchGifPickerPopup : public BasePopup
 {
     using ActionCallback = std::function<void(twitchgifs::SearchResult)>;
-    using AvailabilityCallback = std::function<void(bool)>;
 
 public:
     explicit TwitchGifPickerPopup(QWidget *parent = nullptr);
@@ -30,8 +29,6 @@ public:
     void updateSearch(const QString &query, const QString &channelID,
                       const QString &webOAuthToken);
     void openPicker(const QString &channelID, const QString &webOAuthToken);
-    void prepare(const QString &channelID, const QString &webOAuthToken,
-                 AvailabilityCallback callback, bool forceRefresh = false);
     void resizeToFit(int availableWidth);
     void showMessage(const QString &text);
     void setInputAction(ActionCallback callback);
@@ -44,13 +41,20 @@ protected:
     void themeChangedEvent() override;
 
 private:
+    enum class ConfigState {
+        Unloaded,
+        Loading,
+        Loaded,
+        Failed,
+    };
+
+    void setContext(const QString &channelID, const QString &webOAuthToken);
     void resizeForContent(int contentHeight);
     void loadConfig();
     void startSearch();
     void showStatus(const QString &text);
     void showResults(std::vector<twitchgifs::SearchResult> results);
     bool isAvailable() const;
-    void notifyAvailability();
 
     GenericListView *listView_{};
     QLineEdit *searchInput_{};
@@ -59,11 +63,11 @@ private:
     QTimer redrawTimer_;
 
     ActionCallback callback_;
-    AvailabilityCallback availabilityCallback_;
     QString query_;
     QString channelID_;
     QString webOAuthToken_;
     std::optional<twitchgifs::PickerConfig> config_;
+    ConfigState configState_{ConfigState::Unloaded};
     quint64 requestVersion_{};
     int availableWidth_{440};
     int contentHeight_{40};

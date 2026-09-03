@@ -70,6 +70,16 @@ public:
 
 namespace chatterino {
 
+TEST(Commands, DetectsUserCommand)
+{
+    MockApplication app;
+
+    EXPECT_FALSE(app.commands.hasUserOrPluginCommand(u"/gif"));
+    app.commands.items.append(
+        Command{QStringLiteral("/gif"), QStringLiteral("custom")});
+    EXPECT_TRUE(app.commands.hasUserOrPluginCommand(u"/gif"));
+}
+
 TEST(Commands, parseBanActions)
 {
     MockApplication app;
