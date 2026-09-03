@@ -230,6 +230,9 @@ jobs:
     if: needs.prepare.outputs.should_build == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 90
+    env:
+      CC: gcc-12
+      CXX: g++-12
     steps:
       - uses: actions/checkout@v7
         with:
@@ -249,14 +252,14 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libnotify-dev libfuse2 ninja-build pkg-config
+          sudo apt-get install -y g++-12 gcc-12 libnotify-dev libfuse2 ninja-build pkg-config
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
         with:
-          key: 3r01-linux-${{ env.QT_VERSION }}-webengine
+          key: 3r01-linux-${{ env.QT_VERSION }}-gcc12-webengine
           restore-keys: |
-            3r01-linux-${{ env.QT_VERSION }}-
+            3r01-linux-${{ env.QT_VERSION }}-gcc12-
             3r01-linux-
 
       - name: Ignore the runner cache directory
@@ -266,10 +269,10 @@ jobs:
       - name: Cache Conan packages
         uses: actions/cache@v6
         with:
-          key: ${{ runner.os }}-3r01-conan-${{ hashFiles('**/conanfile.py') }}-Qt6
+          key: ${{ runner.os }}-3r01-conan-gcc12-${{ hashFiles('**/conanfile.py') }}-Qt6
           path: ~/.conan2/
           restore-keys: |
-            ${{ runner.os }}-3r01-conan-
+            ${{ runner.os }}-3r01-conan-gcc12-
 
       - name: Install Conan
         shell: bash
