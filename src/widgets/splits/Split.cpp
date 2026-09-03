@@ -495,6 +495,7 @@ void Split::addShortcuts()
              if (reloadChannel)
              {
                  this->header_->reloadChannelEmotes();
+                 this->input_->refreshGifAvailability(true);
              }
              if (reloadSubscriber)
              {

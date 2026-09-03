@@ -58,6 +58,7 @@ public:
 
     bool isLoggedIn() const;
 
+    void saveUser(const UserData &data);
     void setCurrentWebOAuthToken(QString token);
 
     pajlada::Settings::Setting<QString> currentUsername{"/accounts/current",

@@ -7,6 +7,7 @@
 #include "messages/Message.hpp"
 #include "widgets/BaseWidget.hpp"
 
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -21,9 +22,14 @@
 
 namespace chatterino {
 
+namespace twitchgifs {
+struct SearchResult;
+}
+
 class Split;
 class EmotePopup;
 class InputCompletionPopup;
+class TwitchGifPickerPopup;
 class InputHighlighter;
 class MessageView;
 class LabelButton;
@@ -91,6 +97,9 @@ public:
      */
     void setSendWaitStatus(const QString &text) const;
 
+    /// Reloads whether the current account can send GIFs in this channel.
+    void refreshGifAvailability(bool forceRefresh = false);
+
     void triggerSelfMessageReceived();
 
     std::optional<bool> checkSpellingOverride() const;
@@ -128,6 +137,14 @@ protected:
     void updateCompletionPopup();
     void showCompletionPopup(const QString &text, CompletionKind kind);
     void hideCompletionPopup();
+    TwitchGifPickerPopup *getGifPickerPopup();
+    void positionGifPickerPopup();
+    void showGifPickerPopup(const QString &query);
+    void openGifPicker();
+    void hideGifPickerPopup();
+    void updateGifChannelConnections();
+    void updateGifButton();
+    void sendGif(twitchgifs::SearchResult gif);
     void insertCompletionText(const QString &input_) const;
     void openEmotePopup();
     void clearReplyTarget();
@@ -152,6 +169,7 @@ protected:
     ChannelView *const channelView_;
     QPointer<EmotePopup> emotePopup_;
     QPointer<InputCompletionPopup> inputCompletionPopup_;
+    QPointer<TwitchGifPickerPopup> gifPickerPopup_;
 
     struct {
         // vbox for all components
@@ -172,6 +190,7 @@ protected:
         QLabel *textEditLength;
         LabelButton *sendButton;
         QLabel *sendWaitStatus;
+        LabelButton *gifButton;
         SvgButton *emoteButton;
         QWidget *historySearchWrap;
         QLineEdit *historySearchInput;
@@ -182,9 +201,16 @@ protected:
     bool enableInlineReplying_;
 
     pajlada::Signals::SignalHolder managedConnections_;
+    pajlada::Signals::SignalHolder gifChannelConnections_;
     QStringList prevMsg_;
     QString currMsg_;
     int prevIndex_ = 0;
+    QDateTime gifCooldownUntil_;
+    bool sendingGif_{};
+    bool gifPickerCommandMode_{};
+    bool gifsAvailable_{};
+    bool gifAvailabilityKnown_{};
+    bool gifUnavailableCommandNotified_{};
 
     // Hidden denotes whether this split input should be hidden or not
     // This is used instead of the regular QWidget::hide/show because

@@ -44,6 +44,21 @@ option(CHATTERINO_NIGHTLY_BUILD "Specifies whether this is a nightly build." OFF
 option(CHATTERINO_3R01_BUILD "Build the 3r01 Chatterino distribution." ON)
 set(CHATTERINO_3R01_BUILD_NUMBER "0" CACHE STRING "Monotonic 3r01 release build number.")
 
+if(WIN32 AND CHATTERINO_3R01_BUILD)
+    FetchContent_Declare(webview2
+        URL https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/1.0.4191.47/microsoft.web.webview2.1.0.4191.47.nupkg
+        URL_HASH SHA256=F492BBF547D0DA329553B6727435B677579B1E9F91CC9E4A1AD029366D5F23D0
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(webview2)
+
+    add_library(webview2-loader STATIC IMPORTED GLOBAL)
+    set_target_properties(webview2-loader PROPERTIES
+        IMPORTED_LOCATION "${webview2_SOURCE_DIR}/build/native/x64/WebView2LoaderStatic.lib"
+        INTERFACE_INCLUDE_DIRECTORIES "${webview2_SOURCE_DIR}/build/native/include"
+    )
+endif()
+
 option(CHATTERINO_SANITIZER_SUPPORT "Attempt to enable Sanitizer support on the test and app targets. Actual sanitizers can then be enabled with the SANITIZE_* options." OFF)
 mark_as_advanced(CHATTERINO_SANITIZER_SUPPORT)
 add_feature_info("Chatterino code sanitizer support" CHATTERINO_SANITIZER_SUPPORT "")

@@ -411,6 +411,30 @@ bool TwitchAccountManager::isLoggedIn() const
     return !this->currentUser_->isAnon();
 }
 
+void TwitchAccountManager::saveUser(const UserData &data)
+{
+    const auto basePath = "/accounts/uid" + data.userID.toStdString();
+    pajlada::Settings::Setting<QString>::set(basePath + "/username",
+                                             data.username);
+    pajlada::Settings::Setting<QString>::set(basePath + "/userID", data.userID);
+    pajlada::Settings::Setting<QString>::set(basePath + "/clientID",
+                                             data.clientID);
+    pajlada::Settings::Setting<QString>::set(basePath + "/oauthToken",
+                                             data.oauthToken);
+    pajlada::Settings::Setting<QString>::set(basePath + "/webOAuthToken",
+                                             data.webOAuthToken);
+
+    this->reloadUsers();
+    this->currentUsername = data.username;
+    const auto current = this->getCurrent();
+    if (current && !current->isAnon())
+    {
+        getHelix()->update(current->getOAuthClient(), current->getOAuthToken());
+    }
+    getSettings()->requestSave();
+    this->webOAuthTokenChanged.invoke();
+}
+
 void TwitchAccountManager::setCurrentWebOAuthToken(QString token)
 {
     auto account = this->getCurrent();

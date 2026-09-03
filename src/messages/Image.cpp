@@ -160,6 +160,10 @@ Frames::Frames(QByteArray data, bool animated)
 Frames::~Frames()
 {
     assertInGuiThread();
+    if (this->movie_)
+    {
+        this->movie_->gifTimerConnection.disconnect();
+    }
     DebugCount::decrease(DebugObject::Image);
     if (!this->empty())
     {
@@ -270,6 +274,10 @@ void Frames::clear()
     if (this->animated())
     {
         DebugCount::decrease(DebugObject::AnimatedImage);
+    }
+    if (this->movie_)
+    {
+        this->movie_->gifTimerConnection.disconnect();
     }
     this->items_.clear();
     this->movie_.reset();

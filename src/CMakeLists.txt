@@ -524,6 +524,10 @@ set(SOURCE_FILES
 
         providers/twitch/api/Helix.cpp
         providers/twitch/api/Helix.hpp
+        providers/twitch/api/TwitchGifs.cpp
+        providers/twitch/api/TwitchGifs.hpp
+        providers/twitch/api/TwitchIntegrity.cpp
+        providers/twitch/api/TwitchIntegrity.hpp
         providers/twitch/api/WhisperHistory.cpp
         providers/twitch/api/WhisperHistory.hpp
 
@@ -733,6 +737,8 @@ set(SOURCE_FILES
         widgets/dialogs/LastRunCrashDialog.hpp
         widgets/dialogs/LoginDialog.cpp
         widgets/dialogs/LoginDialog.hpp
+        widgets/dialogs/TwitchWebLoginDialog.cpp
+        widgets/dialogs/TwitchWebLoginDialog.hpp
         widgets/dialogs/QualityPopup.cpp
         widgets/dialogs/QualityPopup.hpp
         widgets/dialogs/ReplyThreadPopup.cpp
@@ -874,6 +880,8 @@ set(SOURCE_FILES
         widgets/splits/InputCompletionItem.hpp
         widgets/splits/InputCompletionPopup.cpp
         widgets/splits/InputCompletionPopup.hpp
+        widgets/splits/TwitchGifPickerPopup.cpp
+        widgets/splits/TwitchGifPickerPopup.hpp
         widgets/splits/InputHighlighter.cpp
         widgets/splits/InputHighlighter.hpp
         widgets/splits/Split.cpp
@@ -982,6 +990,10 @@ target_link_libraries(${LIBRARY_PROJECT}
         LRUCache
         MagicEnum
         $<$<BOOL:${WIN32}>:Wtsapi32>
+        $<$<AND:$<BOOL:${WIN32}>,$<BOOL:${CHATTERINO_3R01_BUILD}>>:webview2-loader>
+        $<$<AND:$<BOOL:${WIN32}>,$<BOOL:${CHATTERINO_3R01_BUILD}>>:version>
+        $<$<AND:$<BOOL:${WIN32}>,$<BOOL:${CHATTERINO_3R01_BUILD}>>:ole32>
+        $<$<AND:$<BOOL:${WIN32}>,$<BOOL:${CHATTERINO_3R01_BUILD}>>:shlwapi>
         twitch-eventsub-ws
         BoostCertify
         )

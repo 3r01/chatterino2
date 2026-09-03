@@ -11,19 +11,15 @@
 #include "controllers/accounts/AccountController.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "singletons/Settings.hpp"
-#include "util/Clipboard.hpp"
 #include "util/Helpers.hpp"
+#include "widgets/dialogs/TwitchWebLoginDialog.hpp"
 
 #ifdef USEWINSDK
 #    include <Windows.h>
 #endif
 
-#include <pajlada/settings/setting.hpp>
-#include <QClipboard>
 #include <QDebug>
-#include <QDesktopServices>
 #include <QMessageBox>
-#include <QUrl>
 
 namespace chatterino {
 
@@ -31,7 +27,7 @@ namespace {
 
 bool logInWithCredentials(QWidget *parent, const QString &userID,
                           const QString &username, const QString &clientID,
-                          const QString &oauthToken)
+                          const QString &oauthToken, QString webOAuthToken = {})
 {
     QStringList errors;
 
@@ -62,16 +58,23 @@ bool logInWithCredentials(QWidget *parent, const QString &userID,
         return false;
     }
 
-    std::string basePath = "/accounts/uid" + userID.toStdString();
-    pajlada::Settings::Setting<QString>::set(basePath + "/username", username);
-    pajlada::Settings::Setting<QString>::set(basePath + "/userID", userID);
-    pajlada::Settings::Setting<QString>::set(basePath + "/clientID", clientID);
-    pajlada::Settings::Setting<QString>::set(basePath + "/oauthToken",
-                                             oauthToken);
+    auto &accounts = getApp()->getAccounts()->twitch;
+    if (webOAuthToken.isEmpty())
+    {
+        const auto existing = accounts.findUserByUsername(username);
+        if (existing)
+        {
+            webOAuthToken = existing->getWebOAuthToken();
+        }
+    }
 
-    getApp()->getAccounts()->twitch.reloadUsers();
-    getApp()->getAccounts()->twitch.currentUsername = username;
-    getSettings()->requestSave();
+    accounts.saveUser({
+        .username = username,
+        .userID = userID,
+        .clientID = clientID,
+        .oauthToken = oauthToken,
+        .webOAuthToken = webOAuthToken,
+    });
     return true;
 }
 
@@ -79,80 +82,24 @@ bool logInWithCredentials(QWidget *parent, const QString &userID,
 
 BasicLoginWidget::BasicLoginWidget()
 {
-    const QString logInLink = "https://chatterino.com/client_login";
     this->setLayout(&this->ui_.layout);
 
-    this->ui_.loginButton.setText("Log in (Opens in browser)");
-    this->ui_.pasteCodeButton.setText("Paste login info");
-    this->ui_.unableToOpenBrowserHelper.setWindowTitle(
-        "Chatterino - unable to open in browser");
-    this->ui_.unableToOpenBrowserHelper.setWordWrap(true);
-    this->ui_.unableToOpenBrowserHelper.hide();
-    this->ui_.unableToOpenBrowserHelper.setText(
-        QString("An error occurred while attempting to open <a href=\"%1\">the "
-                "log in link (%1)</a> - open it manually in your browser and "
-                "proceed from there.")
-            .arg(logInLink));
-    this->ui_.unableToOpenBrowserHelper.setOpenExternalLinks(true);
+    this->ui_.loginButton.setText("Sign in with Twitch");
 
     this->ui_.horizontalLayout.addWidget(&this->ui_.loginButton);
-    this->ui_.horizontalLayout.addWidget(&this->ui_.pasteCodeButton);
 
     this->ui_.layout.addLayout(&this->ui_.horizontalLayout);
-    this->ui_.layout.addWidget(&this->ui_.unableToOpenBrowserHelper);
 
-    connect(&this->ui_.loginButton, &QPushButton::clicked, [this, logInLink]() {
-        qCDebug(chatterinoWidget) << "open login in browser";
-        if (!QDesktopServices::openUrl(QUrl(logInLink)))
-        {
-            qCWarning(chatterinoWidget) << "open login in browser failed";
-            this->ui_.unableToOpenBrowserHelper.show();
-        }
-    });
-
-    connect(&this->ui_.pasteCodeButton, &QPushButton::clicked, [this]() {
-        QStringList parameters = getClipboardText().split(";");
-        QString oauthToken, clientID, username, userID;
-
-        // Removing clipboard content to prevent accidental paste of credentials into somewhere
-        crossPlatformCopy("");
-
-        for (const auto &param : parameters)
-        {
-            QStringList kvParameters = param.split('=');
-            if (kvParameters.size() != 2)
+    connect(&this->ui_.loginButton, &QPushButton::clicked, [this]() {
+        openTwitchWebLogin(this, [this](TwitchWebCredentials credentials) {
+            if (logInWithCredentials(this, credentials.userID,
+                                     credentials.username, credentials.clientID,
+                                     credentials.oauthToken,
+                                     credentials.webOAuthToken))
             {
-                continue;
+                this->window()->close();
             }
-            QString key = kvParameters[0];
-            QString value = kvParameters[1];
-
-            if (key == "oauth_token")
-            {
-                oauthToken = value;
-            }
-            else if (key == "client_id")
-            {
-                clientID = value;
-            }
-            else if (key == "username")
-            {
-                username = value;
-            }
-            else if (key == "user_id")
-            {
-                userID = value;
-            }
-            else
-            {
-                qCWarning(chatterinoWidget) << "Unknown key in code: " << key;
-            }
-        }
-
-        if (logInWithCredentials(this, userID, username, clientID, oauthToken))
-        {
-            this->window()->close();
-        }
+        });
     });
 }
 
