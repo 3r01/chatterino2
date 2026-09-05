@@ -171,11 +171,20 @@ TEST_F(TestTwitchIrc, ParseTwitchSpecials)
     };
 
     auto *twitchEmotes = this->mockApplication->getEmotes()->getTwitchEmotes();
-    const auto gifAt = [](int start, int length, QString link) {
+    const auto gifAt = [](int start, int length, QString link,
+                          QString sourceLink = {}) {
+        if (sourceLink.isEmpty())
+        {
+            sourceLink = link;
+        }
         return TwitchSpecialOccurrence{
             .start = start,
             .length = length,
-            .data = TwitchGifOccurrence{.link = std::move(link)},
+            .data = TwitchGifOccurrence{
+                .id = QStringLiteral("gif"),
+                .sourceLink = std::move(sourceLink),
+                .link = std::move(link),
+            },
         };
     };
 
@@ -402,7 +411,9 @@ TEST_F(TestTwitchIrc, ParseTwitchSpecials)
             R"(@gifs=0-4|gif|https://media4.giphy.com/media/gif/giphy.gif?rid=giphy.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",
             {gifAt(0, 5,
                    QStringLiteral("https://media4.giphy.com/media/gif/200.webp?"
-                                  "rid=200.webp"))},
+                                  "rid=200.webp"),
+                   QStringLiteral("https://media4.giphy.com/media/gif/giphy.gif?"
+                                  "rid=giphy.gif"))},
         },
         {
             R"(@gifs=0-4|gif|https://example.com/giphy.gif?rid=giphy.gif :test!test@test.tmi.twitch.tv PRIVMSG #pajlada :[GIF])",

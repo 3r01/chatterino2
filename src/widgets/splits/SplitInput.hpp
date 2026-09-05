@@ -5,6 +5,7 @@
 #pragma once
 
 #include "messages/Message.hpp"
+#include "providers/twitch/api/TwitchGifs.hpp"
 #include "widgets/BaseWidget.hpp"
 
 #include <QDateTime>
@@ -22,10 +23,6 @@
 #include <memory>
 
 namespace chatterino {
-
-namespace twitchgifs {
-struct SearchResult;
-}
 
 class Split;
 class EmotePopup;
@@ -145,7 +142,8 @@ protected:
     void hideGifPickerPopup();
     void updateGifChannelConnections();
     void updateGifButton();
-    void sendGif(twitchgifs::SearchResult gif);
+    void sendGif(twitchgifs::SearchResult gif, bool clearInput);
+    void addGifToHistory(const twitchgifs::SearchResult &gif, bool clearInput);
     void insertCompletionText(const QString &input_) const;
     void openEmotePopup();
     void clearReplyTarget();
@@ -206,6 +204,7 @@ protected:
     QStringList prevMsg_;
     QString currMsg_;
     int prevIndex_ = 0;
+    QHash<int, twitchgifs::SearchResult> gifHistory_;
     QHash<QString, QDateTime> gifCooldowns_;
     quint64 gifSendGeneration_{};
     quint64 gifAvailabilityGeneration_{};
@@ -214,6 +213,8 @@ protected:
     bool gifsAvailable_{};
     bool gifAvailabilityKnown_{};
     bool gifUnavailableCommandNotified_{};
+    bool restoringHistory_{};
+    bool historyEntryRestored_{};
 
     // Hidden denotes whether this split input should be hidden or not
     // This is used instead of the regular QWidget::hide/show because

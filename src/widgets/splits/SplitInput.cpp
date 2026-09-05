@@ -42,6 +42,7 @@
 
 #include <QCompleter>
 #include <QPainter>
+#include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QTimer>
 #include <qwindow.h>
@@ -165,10 +166,6 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
     // destroyed, so we can safely ignore this signal's connection.
     std::ignore = this->ui_.textEdit->focusLost.connect([this] {
         this->hideCompletionPopup();
-        if (this->gifPickerCommandMode_)
-        {
-            this->hideGifPickerPopup();
-        }
     });
     this->scaleChangedEvent(this->scale());
     this->signalHolder_.managedConnect(getApp()->getHotkeys()->onItemsUpdated,
@@ -538,6 +535,14 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
     }
 
     const auto input = this->ui_.textEdit->toPlainText().trimmed();
+    const auto gifHistory = this->gifHistory_.constFind(this->prevIndex_);
+    if (gifHistory != this->gifHistory_.cend() &&
+        this->prevIndex_ < this->prevMsg_.size() &&
+        input == this->prevMsg_.at(this->prevIndex_).trimmed())
+    {
+        this->sendGif(*gifHistory, true);
+        return {};
+    }
     if ((input == u"/gif" || input.startsWith(u"/gif ")) &&
         !getApp()->getCommands()->hasUserOrPluginCommand(u"/gif"))
     {
@@ -733,6 +738,9 @@ void SplitInput::addShortcuts()
                  this->currMsg_ = this->ui_.textEdit->toPlainText();
              }
 
+             const QScopedValueRollback restoringHistory{
+                 this->restoringHistory_, true};
+             this->historyEntryRestored_ = true;
              this->prevIndex_--;
              this->ui_.textEdit->setPlainText(
                  this->prevMsg_.at(this->prevIndex_));
@@ -756,11 +764,14 @@ void SplitInput::addShortcuts()
              }
              bool cursorToEnd = true;
              QString message = this->ui_.textEdit->toPlainText();
+             const QScopedValueRollback restoringHistory{
+                 this->restoringHistory_, true};
 
              if (this->prevIndex_ != (this->prevMsg_.size() - 1) &&
                  this->prevIndex_ != this->prevMsg_.size())
              {
                  this->prevIndex_++;
+                 this->historyEntryRestored_ = true;
                  this->ui_.textEdit->setPlainText(
                      this->prevMsg_.at(this->prevIndex_));
                  this->ui_.textEdit->resetCompletion();
@@ -772,6 +783,7 @@ void SplitInput::addShortcuts()
                  {
                      // If user has just come from a message history
                      // Then simply get currMsg_.
+                     this->historyEntryRestored_ = false;
                      this->ui_.textEdit->setPlainText(this->currMsg_);
                      this->ui_.textEdit->resetCompletion();
                  }
@@ -1043,6 +1055,10 @@ void SplitInput::mousePressEvent(QMouseEvent *event)
 
 void SplitInput::onTextChanged()
 {
+    if (!this->restoringHistory_)
+    {
+        this->historyEntryRestored_ = false;
+    }
     this->updateCompletionPopup();
 }
 
@@ -1053,6 +1069,13 @@ void SplitInput::onCursorPositionChanged()
 
 void SplitInput::updateCompletionPopup()
 {
+    if (this->restoringHistory_ || this->historyEntryRestored_)
+    {
+        this->hideCompletionPopup();
+        this->hideGifPickerPopup();
+        return;
+    }
+
     auto *channel = this->split_->getChannel().get();
     auto *tc = dynamic_cast<TwitchChannel *>(channel);
     auto &edit = *this->ui_.textEdit;
@@ -1169,7 +1192,7 @@ TwitchGifPickerPopup *SplitInput::getGifPickerPopup()
             [that = QPointer(this)](twitchgifs::SearchResult gif) {
                 if (auto *self = that.data())
                 {
-                    self->sendGif(std::move(gif));
+                    self->sendGif(std::move(gif), self->gifPickerCommandMode_);
                 }
             });
     }
@@ -1404,7 +1427,7 @@ void SplitInput::updateGifButton()
                                                    : QStringLiteral("GIF"));
 }
 
-void SplitInput::sendGif(twitchgifs::SearchResult gif)
+void SplitInput::sendGif(twitchgifs::SearchResult gif, bool clearInput)
 {
     const auto channel = this->split_->getChannel();
     auto *twitchChannel = dynamic_cast<TwitchChannel *>(channel.get());
@@ -1465,16 +1488,12 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
     {
         popup->showMessage(QStringLiteral("Sending GIF..."));
     }
-    const auto input = this->ui_.textEdit->toPlainText();
-    const auto commandMode = this->gifPickerCommandMode_;
-    if (commandMode)
-    {
-        this->postMessageSend(input, {});
-    }
+    this->addGifToHistory(gif, clearInput);
+    const auto sentGif = gif;
     twitchgifs::send(
         channelID, gif.id, gif.url.string, gif.searchTerm, webOAuthToken, this,
         [that = QPointer(this), generation, channelID, accountID, webOAuthToken,
-         cooldownKey](twitchgifs::SendResult result) {
+         cooldownKey, sentGif](twitchgifs::SendResult result) {
             auto *self = that.data();
             if (self == nullptr)
             {
@@ -1483,6 +1502,7 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
             self->gifCooldowns_.insert(cooldownKey,
                                        QDateTime::currentDateTimeUtc().addSecs(
                                            result.secondsUntilCanSend));
+            twitchgifs::recordSent(sentGif);
             if (self->gifSendGeneration_ != generation)
             {
                 return;
@@ -1564,6 +1584,31 @@ void SplitInput::sendGif(twitchgifs::SearchResult gif)
                     QStringLiteral("Unable to send GIF: ") + error.message);
             }
         });
+}
+
+void SplitInput::addGifToHistory(const twitchgifs::SearchResult &gif,
+                                 bool clearInput)
+{
+    const auto label = gif.title.trimmed().isEmpty() ? gif.id : gif.title;
+    const auto historyText = u"/gif "_s + label;
+    const auto previousIndex = this->prevMsg_.size() - 1;
+    const auto previousGif = this->gifHistory_.constFind(previousIndex);
+    const auto isDuplicate = previousIndex >= 0 &&
+                             previousGif != this->gifHistory_.cend() &&
+                             previousGif->id == gif.id;
+
+    if (!isDuplicate)
+    {
+        const auto index = this->prevMsg_.size();
+        this->prevMsg_.append(historyText);
+        this->gifHistory_.insert(index, gif);
+    }
+
+    if (clearInput)
+    {
+        this->clearInput();
+    }
+    this->prevIndex_ = this->prevMsg_.size();
 }
 
 void SplitInput::insertCompletionText(const QString &input_) const
@@ -2246,6 +2291,8 @@ void SplitInput::updateSelectedHistorySearchMatch()
         this->historySearchResultIndex)];
 
     this->prevIndex_ = static_cast<int>(current.messageIdx);
+    const QScopedValueRollback restoringHistory{this->restoringHistory_, true};
+    this->historyEntryRestored_ = true;
     this->ui_.textEdit->setText(current.message);
 
     this->updateHistorySearchStatus(

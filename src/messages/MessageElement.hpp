@@ -255,6 +255,28 @@ private:
     ImagePtr image_;
 };
 
+class TwitchGifElement : public ImageElement
+{
+public:
+    TwitchGifElement(ImagePtr image, QString id, QString title, Url sourceUrl,
+                     Url previewUrl, QSize previewSize);
+
+    const QString &id() const;
+    const QString &title() const;
+    const Url &sourceUrl() const;
+    const Url &previewUrl() const;
+    QSize previewSize() const;
+
+    std::unique_ptr<MessageElement> clone() const override;
+
+private:
+    QString id_;
+    QString title_;
+    Url sourceUrl_;
+    Url previewUrl_;
+    QSize previewSize_;
+};
+
 // contains a image with a circular background color
 class CircularImageElement : public MessageElement
 {

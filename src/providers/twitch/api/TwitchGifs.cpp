@@ -8,6 +8,7 @@
 #include "common/network/NetworkResult.hpp"
 #include "common/QLogging.hpp"
 #include "providers/twitch/api/TwitchIntegrity.hpp"
+#include "singletons/Settings.hpp"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -17,6 +18,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <cstddef>
 #include <utility>
 
 namespace chatterino::twitchgifs {
@@ -28,7 +30,7 @@ constexpr auto TWITCH_WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 constexpr auto GIPHY_SEARCH_URL = "https://api.giphy.com/v1/gifs/search";
 constexpr auto GIPHY_TRENDING_URL = "https://api.giphy.com/v1/gifs/trending";
 constexpr int GIPHY_REQUEST_LIMIT = 50;
-constexpr int SEARCH_RESULT_LIMIT = 12;
+constexpr size_t RECENT_GIF_LIMIT = 50;
 
 const QString PICKER_CONFIG_QUERY = QStringLiteral(R"(
 query getGifPickerConfig($channelID: ID!) {
@@ -206,7 +208,7 @@ void loadPickerConfig(const QString &channelID, const QString &webOAuthToken,
         std::move(onError));
 }
 
-void search(const QString &query, const PickerConfig &config,
+void search(const QString &query, const PickerConfig &config, int offset,
             const QObject *caller, SearchCallback onSuccess,
             ErrorCallback onError)
 {
@@ -217,7 +219,7 @@ void search(const QString &query, const PickerConfig &config,
     urlQuery.addQueryItem("pingback_id", giphyPingbackID());
     urlQuery.addQueryItem("rating", giphyRating(config.contentRating));
     urlQuery.addQueryItem("limit", QString::number(GIPHY_REQUEST_LIMIT));
-    urlQuery.addQueryItem("offset", "0");
+    urlQuery.addQueryItem("offset", QString::number(std::max(0, offset)));
     if (!searchTerm.isEmpty())
     {
         urlQuery.addQueryItem("q", searchTerm);
@@ -237,7 +239,8 @@ void search(const QString &query, const PickerConfig &config,
                 return;
             }
 
-            std::vector<SearchResult> results;
+            SearchPage page;
+            auto &results = page.results;
             results.reserve(data.size());
             bool hasAd = false;
             for (const auto &value : data)
@@ -264,19 +267,66 @@ void search(const QString &query, const PickerConfig &config,
                     !item.previewUrl.string.isEmpty())
                 {
                     results.emplace_back(std::move(item));
-                    if (results.size() == SEARCH_RESULT_LIMIT)
-                    {
-                        break;
-                    }
                 }
             }
-            onSuccess(std::move(results));
+            const auto pagination = root.value("pagination").toObject();
+            const auto responseOffset = pagination.value("offset").toInt();
+            const auto responseCount = pagination.value("count").toInt();
+            const auto totalCount = pagination.value("total_count").toInt();
+            page.nextOffset = responseOffset + responseCount;
+            page.hasMore = responseCount > 0 && page.nextOffset < totalCount;
+            onSuccess(std::move(page));
         })
         .onError([onError = std::move(onError)](const NetworkResult &result) {
             onError(QStringLiteral("GIPHY request failed: %1")
                         .arg(result.formatError()));
         })
         .execute();
+}
+
+std::vector<SearchResult> favouriteGifs()
+{
+    return getSettings()->favouriteTwitchGifs.getValue();
+}
+
+std::vector<SearchResult> recentlySentGifs()
+{
+    return getSettings()->recentTwitchGifs.getValue();
+}
+
+bool isFavourite(const QString &id)
+{
+    const auto &gifs = getSettings()->favouriteTwitchGifs.getValue();
+    return std::ranges::any_of(gifs, [&id](const auto &gif) {
+        return gif.id == id;
+    });
+}
+
+void setFavourite(const SearchResult &gif, bool favourite)
+{
+    auto gifs = getSettings()->favouriteTwitchGifs.getValue();
+    std::erase_if(gifs, [&gif](const auto &existing) {
+        return existing.id == gif.id;
+    });
+    if (favourite)
+    {
+        gifs.insert(gifs.begin(), gif);
+    }
+    getSettings()->favouriteTwitchGifs = std::move(gifs);
+}
+
+void recordSent(const SearchResult &gif)
+{
+    auto gifs = getSettings()->recentTwitchGifs.getValue();
+    std::erase_if(gifs, [&gif](const auto &existing) {
+        return existing.id == gif.id;
+    });
+    gifs.insert(gifs.begin(), gif);
+    if (gifs.size() > RECENT_GIF_LIMIT)
+    {
+        gifs.resize(RECENT_GIF_LIMIT);
+    }
+    getSettings()->recentTwitchGifs = std::move(gifs);
 }
 
 void send(const QString &channelID, const QString &gifID, const QString &gifURL,

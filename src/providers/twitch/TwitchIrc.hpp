@@ -17,7 +17,9 @@
 namespace chatterino {
 
 struct TwitchGifOccurrence {
-    /// The giphy link.
+    QString id;
+    QString sourceLink;
+    /// The link used to render the GIF.
     QString link;
 
     bool operator==(const TwitchGifOccurrence &rhs) const = default;

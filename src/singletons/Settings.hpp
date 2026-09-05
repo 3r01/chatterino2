@@ -23,6 +23,7 @@
 #include "controllers/sound/ISoundController.hpp"
 #include "providers/emoji/EmojiStyle.hpp"
 #include "providers/recentmessages/Provider.hpp"
+#include "providers/twitch/api/TwitchGifs.hpp"
 #include "singletons/NativeMessaging.hpp"
 #include "singletons/Toasts.hpp"
 #include "util/RapidJsonSerializeQString.hpp"  // IWYU pragma: keep
@@ -488,6 +489,10 @@ public:
         "/emotes/favouriteEmojis",
         {},
     };
+    ChatterinoSetting<std::vector<twitchgifs::SearchResult>>
+        favouriteTwitchGifs = {"/twitch/gifs/favourites", {}};
+    ChatterinoSetting<std::vector<twitchgifs::SearchResult>> recentTwitchGifs =
+        {"/twitch/gifs/recent", {}};
 
     /// Links
     BoolSetting linksDoubleClickOnly = {"/links/doubleClickToOpen", false};

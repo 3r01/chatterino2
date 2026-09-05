@@ -4,6 +4,8 @@
 
 #include "widgets/listview/GenericListModel.hpp"
 
+#include <iterator>
+
 namespace chatterino {
 
 GenericListModel::GenericListModel(QObject *parent)
@@ -39,6 +41,20 @@ void GenericListModel::addItem(std::unique_ptr<GenericListItem> item)
     this->beginInsertRows(QModelIndex(), this->items_.size(),
                           this->items_.size());
     this->items_.push_back(std::move(item));
+    this->endInsertRows();
+}
+
+void GenericListModel::prependItems(
+    std::vector<std::unique_ptr<GenericListItem>> items)
+{
+    if (items.empty())
+    {
+        return;
+    }
+    this->beginInsertRows(QModelIndex(), 0, int(items.size() - 1));
+    this->items_.insert(this->items_.begin(),
+                        std::make_move_iterator(items.begin()),
+                        std::make_move_iterator(items.end()));
     this->endInsertRows();
 }
 

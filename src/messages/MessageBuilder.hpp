@@ -264,7 +264,8 @@ private:
     void addEmoji(const EmotePtr &emote);
     void addTextOrEmote(TextState &state, QString string);
 
-    void addTwitchGif(const QString &link, QStringView originalText);
+    void addTwitchGif(const QString &id, const QString &sourceLink,
+                      const QString &link, QStringView originalText);
 
     Outcome tryAppendCheermote(TextState &state, const QString &string);
     Outcome tryAppendEmote(TwitchChannel *twitchChannel, EmoteNameView name);

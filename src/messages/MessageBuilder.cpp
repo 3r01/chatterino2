@@ -523,6 +523,8 @@ struct TokenizedEmote {
     bool trailingSpace = true;
 };
 struct TokenizedGif {
+    QString id;
+    QString sourceLink;
     QString link;
     QStringView originalText;
 };
@@ -582,6 +584,8 @@ void tokenizeWords(QStringView text,
                                     },
                                     [&](const TwitchGifOccurrence &gif) {
                                         visitor(TokenizedGif{
+                                            .id = gif.id,
+                                            .sourceLink = gif.sourceLink,
                                             .link = gif.link,
                                             .originalText = originalText,
                                         });
@@ -2079,15 +2083,16 @@ void MessageBuilder::addTextOrEmote(TextState &state, QString string)
     this->appendOrEmplaceText(string, textColor);
 }
 
-void MessageBuilder::addTwitchGif(const QString &link, QStringView originalText)
+void MessageBuilder::addTwitchGif(const QString &id, const QString &sourceLink,
+                                  const QString &link, QStringView originalText)
 {
     auto original = originalText.toString();
     if (getSettings()->showTwitchGifs)
     {
         this->emplace<LinebreakElement>(MessageElementFlag::TwitchGif);
-        this->emplace<ImageElement>(
-                Image::fromUrlAnimated(Url{link}, 0.7, {200, 200}),
-                MessageElementFlag::TwitchGif)
+        this->emplace<TwitchGifElement>(
+                Image::fromUrlAnimated(Url{link}, 0.7, {200, 200}), id,
+                original, Url{sourceLink}, Url{link}, QSize{})
             ->setLink(Link{Link::Url, link})
             ->setTooltip(original.toHtmlEscaped());
     }
@@ -2838,7 +2843,8 @@ void MessageBuilder::addWords(
                     ->setTrailingSpace(tok.trailingSpace);
             },
             [&](const TokenizedGif &gif) {
-                this->addTwitchGif(gif.link, gif.originalText);
+                this->addTwitchGif(gif.id, gif.sourceLink, gif.link,
+                                   gif.originalText);
             },
         });
 }

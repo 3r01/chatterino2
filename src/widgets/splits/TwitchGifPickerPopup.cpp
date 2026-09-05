@@ -12,7 +12,11 @@
 #include "widgets/listview/GenericListView.hpp"
 
 #include <QLineEdit>
+#include <QMenu>
 #include <QPainter>
+#include <QScrollBar>
+#include <QSignalBlocker>
+#include <QTabBar>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -74,6 +78,17 @@ public:
         painter->drawText(textRect,
                           Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
                           this->result_.title);
+        if (twitchgifs::isFavourite(this->result_.id))
+        {
+            painter->drawText(rect.adjusted(0, 4, -8, 0),
+                              Qt::AlignRight | Qt::AlignTop,
+                              QStringLiteral("★"));
+        }
+    }
+
+    const twitchgifs::SearchResult &result() const
+    {
+        return this->result_;
     }
 
     QSize sizeHint(const QRect &rect) const override
@@ -125,6 +140,11 @@ TwitchGifPickerPopup::TwitchGifPickerPopup(QWidget *parent)
 
     LayoutCreator creator{this};
     auto layout = creator.setLayoutType<QVBoxLayout>().withoutMargin();
+    auto tabs = layout.emplace<QTabBar>().assign(&this->tabs_);
+    tabs->addTab(QStringLiteral("Search"));
+    tabs->addTab(QStringLiteral("Favourites"));
+    tabs->addTab(QStringLiteral("Recent"));
+    tabs->hide();
     auto search = layout.emplace<QLineEdit>().assign(&this->searchInput_);
     search->setPlaceholderText(QStringLiteral("Search GIFs"));
     search->hide();
@@ -133,28 +153,48 @@ TwitchGifPickerPopup::TwitchGifPickerPopup(QWidget *parent)
     this->listView_->setModel(&this->model_);
     this->listView_->setInvokeActionOnTab(false);
     this->listView_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    this->listView_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    this->listView_->setContextMenuPolicy(Qt::CustomContextMenu);
     this->resizeToFit(440);
 
-    QObject::connect(this->searchInput_, &QLineEdit::textChanged, this,
-                     [this](const QString &query) {
-                         if (!this->commandMode_)
-                         {
-                             this->query_ = query;
-                             if (this->config_)
-                             {
-                                 ++this->requestVersion_;
-                                 this->searchTimer_.start();
-                             }
-                         }
-                     });
+    QObject::connect(
+        this->searchInput_, &QLineEdit::textChanged, this,
+        [this](const QString &query) {
+            this->query_ = query;
+            if (this->config_ &&
+                this->tabs_->currentIndex() == static_cast<int>(Page::Search))
+            {
+                ++this->requestVersion_;
+                this->searchTimer_.start();
+            }
+        });
 
     QObject::connect(this->listView_, &GenericListView::closeRequested, this,
                      &QWidget::hide);
+    QObject::connect(this->listView_, &QWidget::customContextMenuRequested,
+                     this, &TwitchGifPickerPopup::showGifMenu);
+    QObject::connect(this->tabs_, &QTabBar::currentChanged, this,
+                     [this](int index) {
+                         this->showPage(static_cast<Page>(index));
+                     });
+    QObject::connect(this->listView_->verticalScrollBar(),
+                     &QScrollBar::actionTriggered, this, [this] {
+                         QTimer::singleShot(0, this, [this] {
+                             auto *bar = this->listView_->verticalScrollBar();
+                             if (this->hasMore_ && !this->loadingMore_ &&
+                                 bar->maximum() > 0 &&
+                                 bar->value() <= ITEM_HEIGHT)
+                             {
+                                 this->startSearch(true);
+                             }
+                         });
+                     });
 
     this->searchTimer_.setSingleShot(true);
     this->searchTimer_.setInterval(250);
-    QObject::connect(&this->searchTimer_, &QTimer::timeout, this,
-                     &TwitchGifPickerPopup::startSearch);
+    QObject::connect(&this->searchTimer_, &QTimer::timeout, this, [this] {
+        this->startSearch();
+    });
 
     this->redrawTimer_.setInterval(33);
     QObject::connect(&this->redrawTimer_, &QTimer::timeout, this, [this] {
@@ -173,8 +213,15 @@ void TwitchGifPickerPopup::updateSearch(const QString &query,
 {
     this->commandMode_ = true;
     this->setAttribute(Qt::WA_ShowWithoutActivating, true);
-    this->setWindowFlag(Qt::WindowDoesNotAcceptFocus, true);
-    this->searchInput_->hide();
+    this->setWindowFlag(Qt::WindowDoesNotAcceptFocus, false);
+    this->tabs_->show();
+    this->searchInput_->show();
+    {
+        const QSignalBlocker tabsBlocker{this->tabs_};
+        const QSignalBlocker searchBlocker{this->searchInput_};
+        this->tabs_->setCurrentIndex(static_cast<int>(Page::Search));
+        this->searchInput_->setText(query);
+    }
     this->resizeToFit(this->width());
     this->query_ = query;
     this->setContext(channelID, webOAuthToken);
@@ -203,6 +250,7 @@ void TwitchGifPickerPopup::openPicker(const QString &channelID,
     this->setWindowFlag(Qt::WindowDoesNotAcceptFocus, false);
     this->setAttribute(Qt::WA_ShowWithoutActivating, false);
     this->searchInput_->show();
+    this->tabs_->show();
     this->searchInput_->clear();
     this->query_.clear();
     this->setContext(channelID, webOAuthToken);
@@ -219,7 +267,7 @@ void TwitchGifPickerPopup::openPicker(const QString &channelID,
     else
     {
         ++this->requestVersion_;
-        this->startSearch();
+        this->showPage(static_cast<Page>(this->tabs_->currentIndex()));
     }
 }
 
@@ -247,9 +295,11 @@ void TwitchGifPickerPopup::resizeForContent(int contentHeight)
 {
     this->contentHeight_ = contentHeight;
     const auto width = std::max(1, std::min(440, this->availableWidth_));
-    const auto searchHeight = this->commandMode_ ? 0 : 32;
+    const auto height = (MAX_VISIBLE_RESULTS * ITEM_HEIGHT) +
+                        this->tabs_->sizeHint().height() +
+                        this->searchInput_->sizeHint().height();
     const auto bottom = this->y() + this->height();
-    this->setFixedSize(width, this->contentHeight_ + searchHeight);
+    this->setFixedSize(width, height);
     if (this->isVisible())
     {
         this->move(this->x(), bottom - this->height());
@@ -324,7 +374,7 @@ void TwitchGifPickerPopup::loadConfig()
                     QStringLiteral("GIF messages are not available here."));
                 return;
             }
-            this->startSearch();
+            this->showPage(static_cast<Page>(this->tabs_->currentIndex()));
         },
         [this, version](QString error) {
             if (version == this->requestVersion_)
@@ -343,30 +393,81 @@ void TwitchGifPickerPopup::loadConfig()
         });
 }
 
-void TwitchGifPickerPopup::startSearch()
+void TwitchGifPickerPopup::startSearch(bool loadMore)
 {
     if (!this->isAvailable())
     {
         return;
     }
 
+    if ((loadMore && this->loadingMore_) ||
+        (!loadMore &&
+         this->tabs_->currentIndex() != static_cast<int>(Page::Search)))
+    {
+        return;
+    }
+    if (!loadMore)
+    {
+        this->nextOffset_ = 0;
+        this->hasMore_ = false;
+        this->showStatus(QStringLiteral("Searching GIFs..."));
+    }
+    this->loadingMore_ = true;
     const auto version = this->requestVersion_;
-    this->showStatus(QStringLiteral("Searching GIFs..."));
     twitchgifs::search(
-        this->query_, *this->config_, this,
-        [this, version](std::vector<twitchgifs::SearchResult> results) {
+        this->query_, *this->config_, this->nextOffset_, this,
+        [this, version, loadMore](twitchgifs::SearchPage page) {
             if (version == this->requestVersion_)
             {
-                this->showResults(std::move(results));
+                this->nextOffset_ = page.nextOffset;
+                this->hasMore_ = page.hasMore;
+                if (loadMore)
+                {
+                    this->appendResults(std::move(page.results));
+                }
+                else
+                {
+                    this->showResults(std::move(page.results));
+                }
+                this->loadingMore_ = false;
             }
         },
-        [this, version](QString error) {
+        [this, version, loadMore](QString error) {
             if (version == this->requestVersion_)
             {
-                this->showStatus(QStringLiteral("Unable to search GIFs: ") +
-                                 error);
+                this->loadingMore_ = false;
+                this->hasMore_ = false;
+                if (!loadMore)
+                {
+                    this->showStatus(QStringLiteral("Unable to search GIFs: ") +
+                                     error);
+                }
             }
         });
+}
+
+void TwitchGifPickerPopup::showPage(Page page)
+{
+    ++this->requestVersion_;
+    this->searchTimer_.stop();
+    this->loadingMore_ = false;
+    this->hasMore_ = false;
+    this->searchInput_->setVisible(page == Page::Search);
+    if (page == Page::Search)
+    {
+        this->startSearch();
+        return;
+    }
+    auto results = page == Page::Favourites ? twitchgifs::favouriteGifs()
+                                            : twitchgifs::recentlySentGifs();
+    if (results.empty())
+    {
+        this->showStatus(page == Page::Favourites
+                             ? QStringLiteral("No favourite GIFs yet.")
+                             : QStringLiteral("No recently sent GIFs yet."));
+        return;
+    }
+    this->showResults(std::move(results));
 }
 
 bool TwitchGifPickerPopup::isAvailable() const
@@ -400,10 +501,70 @@ void TwitchGifPickerPopup::showResults(
         this->model_.addItem(std::make_unique<GifPickerItem>(
             std::move(results[i - 1]), this->callback_));
     }
-    this->listView_->setCurrentIndex(this->model_.index(int(count - 1)));
-    this->listView_->scrollToBottom();
     this->resizeForContent(int(std::min<size_t>(count, MAX_VISIBLE_RESULTS)) *
                            ITEM_HEIGHT);
+    this->listView_->setCurrentIndex(this->model_.index(int(count - 1)));
+    const auto version = this->requestVersion_;
+    QTimer::singleShot(0, this, [this, version] {
+        if (version == this->requestVersion_)
+        {
+            this->listView_->scrollToBottom();
+        }
+    });
+}
+
+void TwitchGifPickerPopup::appendResults(
+    std::vector<twitchgifs::SearchResult> results)
+{
+    if (results.empty())
+    {
+        return;
+    }
+    auto *bar = this->listView_->verticalScrollBar();
+    const auto oldMaximum = bar->maximum();
+    const auto oldValue = bar->value();
+    std::vector<std::unique_ptr<GenericListItem>> items;
+    items.reserve(results.size());
+    for (auto i = results.size(); i > 0; --i)
+    {
+        items.emplace_back(std::make_unique<GifPickerItem>(
+            std::move(results[i - 1]), this->callback_));
+    }
+    this->model_.prependItems(std::move(items));
+    bar->setValue(oldValue + (bar->maximum() - oldMaximum));
+}
+
+void TwitchGifPickerPopup::showGifMenu(const QPoint &position)
+{
+    const auto index = this->listView_->indexAt(position);
+    if (!index.isValid())
+    {
+        return;
+    }
+    auto *item = dynamic_cast<GifPickerItem *>(
+        GenericListItem::fromVariant(index.data()));
+    if (item == nullptr)
+    {
+        return;
+    }
+    const auto gif = item->result();
+    QMenu menu(this);
+    auto *action = menu.addAction(QStringLiteral("Favourite GIF"));
+    action->setCheckable(true);
+    action->setChecked(twitchgifs::isFavourite(gif.id));
+    if (menu.exec(this->listView_->viewport()->mapToGlobal(position)) == action)
+    {
+        twitchgifs::setFavourite(gif, action->isChecked());
+        if (!this->commandMode_ &&
+            this->tabs_->currentIndex() == static_cast<int>(Page::Favourites))
+        {
+            this->showPage(Page::Favourites);
+        }
+        else
+        {
+            this->listView_->viewport()->update();
+        }
+    }
 }
 
 }  // namespace chatterino

@@ -24,6 +24,7 @@
 #include "providers/colors/ColorProvider.hpp"
 #include "providers/links/LinkInfo.hpp"
 #include "providers/links/LinkResolver.hpp"
+#include "providers/twitch/api/TwitchGifs.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
@@ -177,6 +178,28 @@ void addImageContextMenuItems(QMenu *menu,
                 emoteAction->setMenu(emoteMenu);
                 addEmoteContextMenuItems(emoteMenu, *emote.ptr, u"emote");
             }
+        }
+    }
+
+    if (creatorFlags.has(MessageElementFlag::TwitchGif))
+    {
+        if (const auto *gifElement =
+                dynamic_cast<const TwitchGifElement *>(&creator))
+        {
+            twitchgifs::SearchResult gif{
+                .id = gifElement->id(),
+                .title = gifElement->title(),
+                .url = gifElement->sourceUrl(),
+                .previewUrl = gifElement->previewUrl(),
+                .previewSize = gifElement->previewSize(),
+            };
+            auto *action = menu->addAction(QStringLiteral("Favourite GIF"));
+            action->setCheckable(true);
+            action->setChecked(twitchgifs::isFavourite(gif.id));
+            QObject::connect(action, &QAction::toggled, menu,
+                             [gif = std::move(gif)](bool checked) {
+                                 twitchgifs::setFavourite(gif, checked);
+                             });
         }
     }
 

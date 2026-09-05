@@ -163,6 +163,8 @@ void appendTwitchGifOccurrence(QStringView gif,
         range, out, codepointToUtf16Idx, originalMessage, messageOffset,
         [&](QStringView /* nameStr */) -> std::optional<TwitchGifOccurrence> {
             return TwitchGifOccurrence{
+                .id = gifID,
+                .sourceLink = sourceLink,
                 .link = linkStr,
             };
         });

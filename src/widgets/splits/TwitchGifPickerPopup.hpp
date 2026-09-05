@@ -14,6 +14,7 @@
 #include <optional>
 
 class QLineEdit;
+class QTabBar;
 
 namespace chatterino {
 
@@ -47,17 +48,26 @@ private:
         Loaded,
         Failed,
     };
+    enum class Page {
+        Search,
+        Favourites,
+        Recent,
+    };
 
     void setContext(const QString &channelID, const QString &webOAuthToken);
     void resizeForContent(int contentHeight);
     void loadConfig();
-    void startSearch();
+    void startSearch(bool loadMore = false);
+    void showPage(Page page);
     void showStatus(const QString &text);
     void showResults(std::vector<twitchgifs::SearchResult> results);
+    void appendResults(std::vector<twitchgifs::SearchResult> results);
+    void showGifMenu(const QPoint &position);
     bool isAvailable() const;
 
     GenericListView *listView_{};
     QLineEdit *searchInput_{};
+    QTabBar *tabs_{};
     GenericListModel model_{this};
     QTimer searchTimer_;
     QTimer redrawTimer_;
@@ -69,9 +79,12 @@ private:
     std::optional<twitchgifs::PickerConfig> config_;
     ConfigState configState_{ConfigState::Unloaded};
     quint64 requestVersion_{};
+    int nextOffset_{};
     int availableWidth_{440};
     int contentHeight_{40};
     bool commandMode_{true};
+    bool hasMore_{};
+    bool loadingMore_{};
 };
 
 }  // namespace chatterino

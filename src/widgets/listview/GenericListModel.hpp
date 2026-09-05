@@ -48,6 +48,8 @@ public:
      */
     void addItem(std::unique_ptr<GenericListItem> item);
 
+    void prependItems(std::vector<std::unique_ptr<GenericListItem>> items);
+
     /**
      * @brief   Clears this QuickSwitcherModel of all items. This will delete all
      *          GenericListItems added after the last invokation of

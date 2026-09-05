@@ -233,6 +233,53 @@ std::unique_ptr<MessageElement> ImageElement::clone() const
     return im;
 }
 
+TwitchGifElement::TwitchGifElement(ImagePtr image, QString id, QString title,
+                                   Url sourceUrl, Url previewUrl,
+                                   QSize previewSize)
+    : ImageElement(std::move(image), MessageElementFlag::TwitchGif)
+    , id_(std::move(id))
+    , title_(std::move(title))
+    , sourceUrl_(std::move(sourceUrl))
+    , previewUrl_(std::move(previewUrl))
+    , previewSize_(previewSize)
+{
+}
+
+const QString &TwitchGifElement::id() const
+{
+    return this->id_;
+}
+
+const QString &TwitchGifElement::title() const
+{
+    return this->title_;
+}
+
+const Url &TwitchGifElement::sourceUrl() const
+{
+    return this->sourceUrl_;
+}
+
+const Url &TwitchGifElement::previewUrl() const
+{
+    return this->previewUrl_;
+}
+
+QSize TwitchGifElement::previewSize() const
+{
+    return this->previewSize_.isEmpty() ? this->image()->size().toSize()
+                                        : this->previewSize_;
+}
+
+std::unique_ptr<MessageElement> TwitchGifElement::clone() const
+{
+    auto gif = std::make_unique<TwitchGifElement>(
+        this->image(), this->id_, this->title_, this->sourceUrl_,
+        this->previewUrl_, this->previewSize_);
+    gif->cloneFrom(*this);
+    return gif;
+}
+
 CircularImageElement::CircularImageElement(ImagePtr image, int padding,
                                            QColor background,
                                            MessageElementFlags flags)
