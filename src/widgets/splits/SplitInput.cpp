@@ -20,6 +20,7 @@
 #include "providers/twitch/TwitchCommon.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
 #include "singletons/Fonts.hpp"
+#include "singletons/ImageUploader.hpp"
 #include "singletons/Settings.hpp"
 #include "singletons/Theme.hpp"
 #include "util/Helpers.hpp"
@@ -41,7 +42,9 @@
 #include "widgets/splits/TwitchGifPickerPopup.hpp"
 
 #include <QCompleter>
+#include <QMessageBox>
 #include <QPainter>
+#include <QPushButton>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QTimer>
@@ -120,6 +123,13 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
     this->installEventFilter(this);
     this->initLayout();
 
+    // The textEdit's signal will be destroyed before this SplitInput is
+    // destroyed, so we can safely ignore this signal's connection.
+    std::ignore = this->ui_.textEdit->imagePasted.connect(
+        [this](const QMimeData *source) {
+            this->handleImagePaste(source);
+        });
+
     auto *completer =
         new QCompleter(this->split_->getChannel()->completionModel);
     this->ui_.textEdit->setCompleter(completer);
@@ -180,6 +190,71 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
     this->backgroundColorAnimation.setEasingCurve(curve);
     this->updateGifChannelConnections();
     this->refreshGifAvailability();
+}
+
+void SplitInput::handleImagePaste(const QMimeData *source)
+{
+    if (!getSettings()->imageUploaderEnabled)
+    {
+        return;
+    }
+
+    auto channel = this->split_->getChannel();
+    auto *imageUploader = getApp()->getImageUploader();
+
+    auto [images, imageProcessError] = imageUploader->getImages(source);
+    if (images.empty())
+    {
+        channel->addSystemMessage(
+            QString("An error occurred trying to process your image: %1")
+                .arg(imageProcessError));
+        return;
+    }
+
+    if (getSettings()->askOnImageUpload.getValue())
+    {
+        QMessageBox msgBox(this->window());
+        msgBox.setWindowTitle("Chatterino");
+        msgBox.setText("Image upload");
+        msgBox.setInformativeText(
+            "You are uploading an image to a 3rd party service not in "
+            "control of the Chatterino team. You may not be able to "
+            "remove the image from the site. Are you okay with this?");
+        auto *cancel = msgBox.addButton(QMessageBox::Cancel);
+        auto *yes = msgBox.addButton(QMessageBox::Yes);
+        auto *yesDontAskAgain =
+            msgBox.addButton("Yes, don't ask again", QMessageBox::YesRole);
+
+        msgBox.setDefaultButton(QMessageBox::Yes);
+
+        msgBox.exec();
+
+        auto *clickedButton = msgBox.clickedButton();
+        if (clickedButton == yesDontAskAgain)
+        {
+            getSettings()->askOnImageUpload.setValue(false);
+        }
+        else if (clickedButton == yes)
+        {
+            // Continue with image upload
+        }
+        else if (clickedButton == cancel)
+        {
+            // Not continuing with image upload
+            return;
+        }
+        else
+        {
+            // An unknown "button" was pressed - handle it as if cancel was pressed
+            // cancel is already handled as the "escape" option, so this should never happen
+            qCWarning(chatterinoImageuploader)
+                << "Unhandled button pressed:" << clickedButton;
+            return;
+        }
+    }
+
+    QPointer<ResizingTextEdit> edit = this->ui_.textEdit;
+    imageUploader->upload(std::move(images), channel, edit);
 }
 
 void SplitInput::initLayout()
