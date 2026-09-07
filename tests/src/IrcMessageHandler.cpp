@@ -663,6 +663,51 @@ INSTANTIATE_TEST_SUITE_P(
     IrcMessage, TestIrcMessageHandlerP,
     testing::ValuesIn(testlib::Snapshot::discover(IRC_CATEGORY)));
 
+TEST(IrcMessageHandler, JoinUsesConnectionIdentity)
+{
+    MockApplication app(u"{}"_s);
+    auto channel = std::make_shared<TwitchChannel>(u"testchannel"_s);
+    app.twitch.mockChannels.emplace(channel->getName(), channel);
+
+    // The read connection's identity is independent of the selected account.
+    Communi::IrcConnection connection;
+    connection.setNickName(u"justinfan12345"_s);
+    bool joined = false;
+    auto guard = channel->joined.connect([&joined] {
+        joined = true;
+    });
+    auto message =
+        std::unique_ptr<Communi::IrcMessage>(Communi::IrcMessage::fromData(
+            ":justinfan12345!justinfan12345@host JOIN #testchannel",
+            &connection));
+
+    IrcMessageHandler::instance().handleJoinMessage(message.get());
+
+    EXPECT_TRUE(joined);
+    ASSERT_NE(channel->getLastMessage(), nullptr);
+    EXPECT_EQ(channel->getLastMessage()->messageText, u"joined channel"_s);
+}
+
+TEST(IrcMessageHandler, PartUsesConnectionIdentity)
+{
+    MockApplication app(u"{}"_s);
+    auto channel = std::make_shared<TwitchChannel>(u"testchannel"_s);
+    app.twitch.mockChannels.emplace(channel->getName(), channel);
+
+    Communi::IrcConnection connection;
+    connection.setNickName(u"justinfan12345"_s);
+    auto message =
+        std::unique_ptr<Communi::IrcMessage>(Communi::IrcMessage::fromData(
+            ":justinfan12345!justinfan12345@host PART #testchannel",
+            &connection));
+
+    IrcMessageHandler::instance().handlePartMessage(message.get());
+
+    ASSERT_NE(channel->getLastMessage(), nullptr);
+    EXPECT_TRUE(channel->getLastMessage()->messageText.contains(
+        u"unexpectedly dropped"_s));
+}
+
 TEST(TestIrcMessageHandlerP, Integrity)
 {
     ASSERT_FALSE(UPDATE_SNAPSHOTS);  // make sure fixtures are actually tested

@@ -27,6 +27,7 @@
 #include "providers/twitch/PubSubManager.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
+#include "providers/twitch/TwitchCommon.hpp"
 #include "singletons/Settings.hpp"
 #include "singletons/WindowManager.hpp"
 #include "util/PostToThread.hpp"
@@ -163,6 +164,21 @@ TwitchIrcServer::TwitchIrcServer()
     };
     this->joinBucket_.reset(new RatelimitBucket(
         JOIN_RATELIMIT_BUDGET, JOIN_RATELIMIT_COOLDOWN, actuallyJoin, this));
+    this->writeJoinBucket_.reset(new RatelimitBucket(
+        JOIN_RATELIMIT_BUDGET, JOIN_RATELIMIT_COOLDOWN,
+        [this](const QString &channel) {
+            if (this->channels.contains(channel) &&
+                this->writeConnection_->isConnected() &&
+                !getApp()->getAccounts()->twitch.getCurrent()->isAnon())
+            {
+                this->writeConnection_->sendRaw("JOIN #" + channel);
+            }
+        },
+        this));
+
+    QObject::connect(this->writeConnection_.get(),
+                     &Communi::IrcConnection::connected, this,
+                     &TwitchIrcServer::onWriteConnected);
 
     QObject::connect(this->writeConnection_.get(),
                      &Communi::IrcConnection::messageReceived, this,
@@ -213,7 +229,7 @@ void TwitchIrcServer::initialize()
     this->signalHolder.managedConnect(
         getApp()->getAccounts()->twitch.currentUserChanged, [this]() {
             postToThread([this] {
-                this->connect();
+                this->reconnectWrite();
                 this->loadWhisperHistory();
             });
         });
@@ -397,7 +413,12 @@ void TwitchIrcServer::initializeConnection(IrcConnection *connection,
     std::shared_ptr<TwitchAccount> account =
         getApp()->getAccounts()->twitch.getCurrent();
 
-    qCDebug(chatterinoTwitch) << "logging in as" << account->getUserName();
+    const bool anonymous = type == ConnectionType::Read || account->isAnon();
+    const QString username =
+        anonymous ? ANONYMOUS_USERNAME : account->getUserName();
+    qCDebug(chatterinoTwitch)
+        << (type == ConnectionType::Read ? "Read" : "Write")
+        << "connection logging in as" << username;
 
     // twitch.tv/tags enables IRCv3 tags on messages. See https://dev.twitch.tv/docs/irc/tags
     // twitch.tv/commands enables a bunch of miscellaneous command capabilities. See https://dev.twitch.tv/docs/irc/commands
@@ -412,7 +433,6 @@ void TwitchIrcServer::initializeConnection(IrcConnection *connection,
     connection->network()->setSkipCapabilityValidation(true);
     connection->network()->setRequestedCapabilities(caps);
 
-    QString username = account->getUserName();
     QString oauthToken = account->getOAuthToken();
 
     if (!oauthToken.startsWith("oauth:"))
@@ -424,10 +444,7 @@ void TwitchIrcServer::initializeConnection(IrcConnection *connection,
     connection->setNickName(username);
     connection->setRealName(username);
 
-    if (!account->isAnon())
-    {
-        connection->setPassword(oauthToken);
-    }
+    connection->setPassword(anonymous ? QString{} : oauthToken);
 
     // https://dev.twitch.tv/docs/irc#connecting-to-the-twitch-irc-server
     // SSL disabled: irc://irc.chat.twitch.tv:6667 (or port 80)
@@ -500,11 +517,6 @@ void TwitchIrcServer::readConnectionMessageReceived(
     {
         handler.handlePartMessage(message);
     }
-    else if (command == "USERSTATE")
-    {
-        // Received USERSTATE upon JOINing a channel
-        handler.handleUserStateMessage(message);
-    }
     else if (command == "ROOMSTATE")
     {
         // Received ROOMSTATE upon JOINing a channel
@@ -527,16 +539,14 @@ void TwitchIrcServer::readConnectionMessageReceived(
         handler.handleNoticeMessage(
             static_cast<Communi::IrcNoticeMessage *>(message));
     }
-    else if (command == "WHISPER")
-    {
-        handler.handleWhisperMessage(message);
-    }
     else if (command == "RECONNECT")
     {
         this->addGlobalSystemMessage(
             "Twitch Servers requested us to reconnect, reconnecting");
         this->markChannelsConnected();
-        this->connect();
+        std::scoped_lock lock(this->connectionMutex_);
+        this->readConnection_->close();
+        initializeConnection(this->readConnection_.get(), ConnectionType::Read);
     }
 }
 
@@ -549,8 +559,17 @@ void TwitchIrcServer::writeConnectionMessageReceived(
     // Below commands enabled through the twitch.tv/commands CAP REQ
     if (command == "USERSTATE")
     {
-        // Received USERSTATE upon sending PRIVMSG messages
+        // Received USERSTATE upon joining channels or sending messages.
         handler.handleUserStateMessage(message);
+    }
+    else if (command == "WHISPER")
+    {
+        handler.handleWhisperMessage(message);
+    }
+    else if (command == "PART" &&
+             message->nick() == this->writeConnection_->nickName())
+    {
+        handler.handlePartMessage(message);
     }
     else if (command == "NOTICE")
     {
@@ -563,8 +582,33 @@ void TwitchIrcServer::writeConnectionMessageReceived(
     {
         this->addGlobalSystemMessage(
             "Twitch Servers requested us to reconnect, reconnecting");
-        this->connect();
+        this->reconnectWrite();
     }
+}
+
+void TwitchIrcServer::onWriteConnected()
+{
+    if (getApp()->getAccounts()->twitch.getCurrent()->isAnon())
+    {
+        return;
+    }
+
+    // The authenticated connection owns account-specific channel state.
+    // Public messages received here are ignored to avoid displaying duplicates.
+    this->forEachChannel([this](const ChannelPtr &channel) {
+        if (!channel->getName().startsWith("/"))
+        {
+            this->writeJoinBucket_->send(channel->getName());
+        }
+    });
+}
+
+void TwitchIrcServer::reconnectWrite()
+{
+    assertInGuiThread();
+    std::scoped_lock lock(this->connectionMutex_);
+    this->writeConnection_->close();
+    initializeConnection(this->writeConnection_.get(), ConnectionType::Write);
 }
 
 void TwitchIrcServer::onReadConnected()
@@ -1185,6 +1229,11 @@ void TwitchIrcServer::addFakeMessage(const QString &data)
         this->privateMessageReceived(
             static_cast<Communi::IrcPrivateMessage *>(fakeMessage));
     }
+    else if (fakeMessage->command() == "WHISPER" ||
+             fakeMessage->command() == "USERSTATE")
+    {
+        this->writeConnectionMessageReceived(fakeMessage);
+    }
     else
     {
         this->readConnectionMessageReceived(fakeMessage);
@@ -1297,6 +1346,7 @@ ChannelPtr TwitchIrcServer::getOrAddChannel(const QString &dirtyChannelName)
                 if (!channelName.startsWith("/"))
                 {
                     this->readConnection_->sendRaw("PART #" + channelName);
+                    this->writeConnection_->sendRaw("PART #" + channelName);
                 }
             }
         });
@@ -1304,6 +1354,12 @@ ChannelPtr TwitchIrcServer::getOrAddChannel(const QString &dirtyChannelName)
     // join IRC channel
     {
         std::lock_guard<std::mutex> lock2(this->connectionMutex_);
+
+        if (this->writeConnection_->isConnected() &&
+            !channelName.startsWith("/"))
+        {
+            this->writeJoinBucket_->send(channelName);
+        }
 
         if (this->readConnection_ && this->readConnection_->isConnected())
         {

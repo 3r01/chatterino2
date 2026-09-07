@@ -30,6 +30,7 @@
 #include "util/Helpers.hpp"
 #include "util/IrcHelpers.hpp"
 
+#include <IrcConnection>
 #include <IrcMessage>
 #include <QLocale>
 #include <QStringBuilder>
@@ -1027,8 +1028,8 @@ void IrcMessageHandler::handleJoinMessage(Communi::IrcMessage *message)
         return;
     }
 
-    if (message->nick() ==
-        getApp()->getAccounts()->twitch.getCurrent()->getUserName())
+    if (message->connection() &&
+        message->nick() == message->connection()->nickName())
     {
         twitchChannel->addSystemMessage("joined channel");
         twitchChannel->joined.invoke();
@@ -1052,7 +1053,7 @@ void IrcMessageHandler::handlePartMessage(Communi::IrcMessage *message)
     }
 
     const auto selfAccountName =
-        getApp()->getAccounts()->twitch.getCurrent()->getUserName();
+        message->connection() ? message->connection()->nickName() : QString{};
     if (message->nick() != selfAccountName &&
         getSettings()->showParts.getValue())
     {

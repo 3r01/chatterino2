@@ -143,6 +143,8 @@ TwitchChannel::TwitchChannel(const QString &name)
     this->signalHolder_.managedConnect(
         getApp()->getAccounts()->twitch.currentUserChanged, [this] {
             this->setMod(false);
+            this->setVIP(false);
+            this->setStaff(false);
             this->refreshPubSub();
             this->refreshTwitchChannelEmotes(false);
         });

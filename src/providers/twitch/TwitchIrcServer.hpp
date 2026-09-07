@@ -179,6 +179,8 @@ protected:
     void writeConnectionMessageReceived(Communi::IrcMessage *message);
 
     void onReadConnected();
+    void onWriteConnected();
+    void reconnectWrite();
     void onDisconnected();
     void markChannelsConnected();
 
@@ -202,6 +204,7 @@ private:
     // Our rate limiting bucket for the Twitch join rate limits
     // https://dev.twitch.tv/docs/irc/guide#rate-limits
     QObjectPtr<RatelimitBucket> joinBucket_;
+    QObjectPtr<RatelimitBucket> writeJoinBucket_;
 
     std::mutex connectionMutex_;
 
