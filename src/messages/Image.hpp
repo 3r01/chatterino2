@@ -52,7 +52,7 @@ public:
     bool animated() const;
     void advance();
     std::optional<QPixmap> current() const;
-    std::optional<QPixmap> first() const;
+    std::optional<QSize> size() const;
 
 private:
     int64_t memoryUsage() const;

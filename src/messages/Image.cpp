@@ -187,14 +187,14 @@ std::optional<QPixmap> Frames::current() const
     return this->items_[this->index_].image;
 }
 
-std::optional<QPixmap> Frames::first() const
+std::optional<QSize> Frames::size() const
 {
     if (this->items_.empty())
     {
         return std::nullopt;
     }
 
-    return this->items_.front().image;
+    return this->items_.front().image.size();
 }
 
 QList<Frame> readFrames(QImageReader &reader, const Url &url)
@@ -491,9 +491,9 @@ int Image::width() const
         return 0;
     }
 
-    if (auto pixmap = this->frames_->first())
+    if (auto size = this->frames_->size())
     {
-        return static_cast<int>(pixmap->width() * this->scale_);
+        return static_cast<int>(size->width() * this->scale_);
     }
 
     // No frames loaded, use the expected size
@@ -509,9 +509,9 @@ int Image::height() const
         return 0;
     }
 
-    if (auto pixmap = this->frames_->first())
+    if (auto size = this->frames_->size())
     {
-        return static_cast<int>(pixmap->height() * this->scale_);
+        return static_cast<int>(size->height() * this->scale_);
     }
 
     // No frames loaded, use the expected size
@@ -527,9 +527,9 @@ QSizeF Image::size() const
         return {0, 0};
     }
 
-    if (auto pixmap = this->frames_->first())
+    if (auto size = this->frames_->size())
     {
-        return pixmap->size().toSizeF() * this->scale_;
+        return size->toSizeF() * this->scale_;
     }
 
     // No frames loaded, use the expected size
