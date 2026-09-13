@@ -197,8 +197,8 @@ ExpectedStr<void> writeManifestTo(QString directory, const QString &nmDirectory,
     QDir dir(directory);
     if (!dir.exists(nmDirectory) && !dir.mkdir(nmDirectory))
     {
-        return makeUnexpected(QString(u"Failed to create "_s % nmDirectory %
-                                      u" in "_s % directory));
+        return makeUnexpected(
+            QString(u"Failed to create " % nmDirectory % u" in " % directory));
     }
     dir.cd(nmDirectory);
 
@@ -206,13 +206,13 @@ ExpectedStr<void> writeManifestTo(QString directory, const QString &nmDirectory,
     if (!file.open(QFile::WriteOnly | QFile::Truncate))
     {
         return makeUnexpected(
-            QString(u"Failed to open "_s % filename % u" in "_s % directory));
+            QString(u"Failed to open " % filename % u" in " % directory));
     }
     const auto data = json.toJson();
     if (file.write(data) != data.size() || !file.flush())
     {
         return makeUnexpected(
-            QString(u"Failed to write "_s % filename % u" in "_s % directory));
+            QString(u"Failed to write " % filename % u" in " % directory));
     }
 
     return {};
