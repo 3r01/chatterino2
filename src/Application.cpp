@@ -6,6 +6,7 @@
 
 #include "common/Args.hpp"
 #include "common/Channel.hpp"
+#include "common/Modes.hpp"
 #include "common/Version.hpp"
 #include "controllers/accounts/AccountController.hpp"
 #include "controllers/commands/Command.hpp"

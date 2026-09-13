@@ -18,6 +18,7 @@ namespace chatterino::nm::detail {
 enum class WriteManifestError : std::uint8_t {
     FailedToCreateDirectory,
     FailedToCreateFile,
+    FailedToWriteFile,
 };
 
 Expected<void, WriteManifestError> writeManifestTo(QString directory,
@@ -43,7 +44,8 @@ class Modes;
 
 using ChannelPtr = std::shared_ptr<Channel>;
 
-void registerNmHost(const Modes &modes, const Paths &paths);
+void registerNmHost(Modes modes, const Paths &paths);
+bool registerNmHost(const Paths &paths);
 std::string &getNmQueueName(const Paths &paths);
 
 Atomic<std::optional<QString>> &nmIpcError();

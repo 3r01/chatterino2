@@ -79,21 +79,32 @@ const Config CHROME{
 #endif
 };
 
-void registerNmManifest([[maybe_unused]] const Paths &paths,
+bool registerNmManifest([[maybe_unused]] const Paths &paths,
                         const Config &config, const QJsonDocument &document)
 {
 #ifdef Q_OS_WIN
-    std::ignore =
-        writeManifestTo(paths.miscDirectory, u"."_s, config.fileName, document);
+    if (!writeManifestTo(paths.miscDirectory, u"."_s, config.fileName,
+                         document))
+    {
+        return false;
+    }
 
     QSettings registry(config.registryKey, QSettings::NativeFormat);
     registry.setValue("Default",
                       QString(paths.miscDirectory % u'/' % config.fileName));
+    registry.sync();
+    if (registry.status() != QSettings::NoError)
+    {
+        qCWarning(chatterinoNativeMessage)
+            << "Failed to register native messaging host in"
+            << config.registryKey;
+        return false;
+    }
 #else
-    std::ignore =
-        writeManifestTo(config.browserDirectory, config.nmDirectory,
-                        u"com.chatterino.chatterino.json"_s, document);
+    return bool(writeManifestTo(config.browserDirectory, config.nmDirectory,
+                                u"com.chatterino.chatterino.json"_s, document));
 #endif
+    return true;
 }
 
 QJsonObject buildBaseDocument()
@@ -199,7 +210,13 @@ Expected<void, WriteManifestError> writeManifestTo(QString directory,
             << "Failed to open" << filename << "in" << directory;
         return makeUnexpected(WriteManifestError::FailedToCreateFile);
     }
-    file.write(json.toJson());
+    const auto data = json.toJson();
+    if (file.write(data) != data.size() || !file.flush())
+    {
+        qCWarning(chatterinoNativeMessage)
+            << "Failed to write" << filename << "in" << directory;
+        return makeUnexpected(WriteManifestError::FailedToWriteFile);
+    }
 
     return {};
 }
@@ -240,13 +257,8 @@ namespace chatterino {
 using namespace chatterino::nm::detail;
 using namespace literals;
 
-void registerNmHost(const Modes &modes, const Paths &paths)
+bool registerNmHost(const Paths &paths)
 {
-    if (modes.isPortable)
-    {
-        return;
-    }
-
     QStringList extensionIDs =
         getSettings()->additionalExtensionIDs.getValue().split(
             ';', Qt::SkipEmptyParts);
@@ -254,8 +266,10 @@ void registerNmHost(const Modes &modes, const Paths &paths)
     QJsonDocument chromeManifest = buildChromeManifest(extensionIDs);
     QJsonDocument firefoxManifest = buildFirefoxManifest(extensionIDs);
 
-    registerNmManifest(paths, CHROME, chromeManifest);
-    registerNmManifest(paths, FIREFOX, firefoxManifest);
+    const bool chromeRegistered =
+        registerNmManifest(paths, CHROME, chromeManifest);
+    const bool firefoxRegistered =
+        registerNmManifest(paths, FIREFOX, firefoxManifest);
 
 #ifndef Q_OS_WIN
     switch (getSettings()->customNativeMessagingManifestFormat.getEnum())
@@ -268,6 +282,17 @@ void registerNmHost(const Modes &modes, const Paths &paths)
             break;
     }
 #endif
+    return chromeRegistered && firefoxRegistered;
+}
+
+void registerNmHost(Modes modes, const Paths &paths)
+{
+    if (modes.isPortable)
+    {
+        return;
+    }
+
+    std::ignore = registerNmHost(paths);
 }
 
 std::string &getNmQueueName(const Paths &paths)
