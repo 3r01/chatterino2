@@ -50,7 +50,7 @@ struct Frames::Storage {
     virtual bool animated() const = 0;
     virtual void start(GIFTimer *timer) = 0;
     virtual std::optional<QPixmap> current() const = 0;
-    virtual std::optional<QSize> size() const = 0;
+    virtual std::optional<QSize> frameSize() const = 0;
 
     pajlada::Signals::ScopedConnection gifTimerConnection;
 };
@@ -155,7 +155,7 @@ struct Frames::CachedFrames : Storage {
         return this->items[this->index].image;
     }
 
-    std::optional<QSize> size() const override
+    std::optional<QSize> frameSize() const override
     {
         if (this->empty())
         {
@@ -254,9 +254,9 @@ std::optional<QPixmap> Frames::current() const
     return this->storage_->current();
 }
 
-std::optional<QSize> Frames::size() const
+std::optional<QSize> Frames::frameSize() const
 {
-    return this->storage_->size();
+    return this->storage_->frameSize();
 }
 
 QList<Frame> readFrames(QImageReader &reader, const Url &url)
@@ -553,7 +553,7 @@ int Image::width() const
         return 0;
     }
 
-    if (auto size = this->frames_->size())
+    if (auto size = this->frames_->frameSize())
     {
         return static_cast<int>(size->width() * this->scale_);
     }
@@ -571,7 +571,7 @@ int Image::height() const
         return 0;
     }
 
-    if (auto size = this->frames_->size())
+    if (auto size = this->frames_->frameSize())
     {
         return static_cast<int>(size->height() * this->scale_);
     }
@@ -589,7 +589,7 @@ QSizeF Image::size() const
         return {0, 0};
     }
 
-    if (auto size = this->frames_->size())
+    if (auto size = this->frames_->frameSize())
     {
         return size->toSizeF() * this->scale_;
     }

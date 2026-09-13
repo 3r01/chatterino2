@@ -48,7 +48,7 @@ TEST(Image, EmptyCachedFrames)
     EXPECT_TRUE(frames.empty());
     EXPECT_FALSE(frames.animated());
     EXPECT_FALSE(frames.current());
-    EXPECT_FALSE(frames.size());
+    EXPECT_FALSE(frames.frameSize());
 }
 
 TEST(Image, StaticCachedFrame)
@@ -70,14 +70,14 @@ TEST(Image, CachedFramesUseSharedTimer)
         {.image = makePixmap({1, 1}, Qt::red), .duration = 20},
         {.image = makePixmap({2, 2}, Qt::blue), .duration = 60}});
     ASSERT_TRUE(frames.animated());
-    ASSERT_EQ(frames.size(), QSize(1, 1));
+    ASSERT_EQ(frames.frameSize(), QSize(1, 1));
 
     auto *timer = app.emotes.getGIFTimer();
     timer->signal.invoke();
     EXPECT_TRUE(hasColor(frames, Qt::red));
     timer->signal.invoke();
     EXPECT_TRUE(hasColor(frames, Qt::blue));
-    EXPECT_EQ(frames.size(), QSize(1, 1));
+    EXPECT_EQ(frames.frameSize(), QSize(1, 1));
 }
 
 TEST(Image, CachedFramesClearDisconnectsTimer)
@@ -92,7 +92,7 @@ TEST(Image, CachedFramesClearDisconnectsTimer)
         EXPECT_TRUE(frames.empty());
         EXPECT_FALSE(frames.animated());
         EXPECT_FALSE(frames.current());
-        EXPECT_FALSE(frames.size());
+        EXPECT_FALSE(frames.frameSize());
         timer->signal.invoke();
     }
     timer->signal.invoke();

@@ -51,7 +51,8 @@ public:
     bool empty() const;
     bool animated() const;
     std::optional<QPixmap> current() const;
-    std::optional<QSize> size() const;
+    /// Returns the size of the first frame, if one has been loaded.
+    std::optional<QSize> frameSize() const;
 
 private:
     struct Storage;
