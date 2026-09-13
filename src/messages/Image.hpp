@@ -7,7 +7,6 @@
 #include "common/Aliases.hpp"
 #include "util/DebugCount.hpp"
 
-#include <pajlada/signals/signal.hpp>
 #include <QByteArray>
 #include <QList>
 #include <QPixmap>
@@ -53,21 +52,17 @@ public:
     void touch();
     bool empty() const;
     bool animated() const;
-    void advance();
     std::optional<QPixmap> current() const;
-    std::optional<QPixmap> first() const;
+    /// Returns the size of the first frame, if one has been loaded.
+    std::optional<QSize> frameSize() const;
 
 private:
-    struct Movie;
+    struct Storage;
+    struct CachedFrames;
+    struct MovieFrames;
 
     int64_t memoryUsage() const;
-    void processOffset();
-    void connectMovieTimer();
-    QList<Frame> items_;
-    std::unique_ptr<Movie> movie_;
-    QList<Frame>::size_type index_{0};
-    int durationOffset_{0};
-    pajlada::Signals::Connection gifTimerConnection_;
+    std::unique_ptr<Storage> storage_;
 };
 
 QList<Frame> readFrames(QImageReader &reader, const Url &url,

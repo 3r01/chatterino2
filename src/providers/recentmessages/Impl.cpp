@@ -5,8 +5,10 @@
 #include "providers/recentmessages/Impl.hpp"
 
 #include "messages/MessageBuilder.hpp"
+#include "providers/recentmessages/Api.hpp"
 #include "providers/twitch/IrcMessageHandler.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
+#include "singletons/Settings.hpp"
 #include "util/Helpers.hpp"
 #include "util/VectorMessageSink.hpp"
 

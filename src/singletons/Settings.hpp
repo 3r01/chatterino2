@@ -227,6 +227,10 @@ public:
         "/appearance/tabVisibility",
         NotebookTabVisibility::AllTabs,
     };
+    BoolSetting growWrappedNotebookLines = {
+        "/appearance/growWrappedNotebookLines",
+        false,
+    };
 
     //    BoolSetting collapseLongMessages =
     //    {"/appearance/messages/collapseLongMessages", false};

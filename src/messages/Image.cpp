@@ -18,6 +18,7 @@
 #include "util/PostToThread.hpp"
 
 #include <boost/functional/hash.hpp>
+#include <pajlada/signals/scoped-connection.hpp>
 #include <QBuffer>
 #include <QImageReader>
 #include <QMovie>
@@ -27,6 +28,8 @@
 #include <QTimer>
 
 #include <atomic>
+#include <numeric>
+#include <utility>
 
 // Duration between each check of every Image instance
 const auto IMAGE_POOL_CLEANUP_INTERVAL = std::chrono::minutes(1);
@@ -51,40 +54,269 @@ int normalizedFrameDuration(int duration)
 
 }  // namespace
 
-struct Frames::Movie {
-    Movie(QByteArray bytes, bool isAnimated)
+struct Frames::Storage {
+    Storage() = default;
+    virtual ~Storage() = default;
+    Storage(const Storage &) = delete;
+    Storage &operator=(const Storage &) = delete;
+    Storage(Storage &&) = delete;
+    Storage &operator=(Storage &&) = delete;
+
+    virtual int64_t memoryUsage() const = 0;
+    virtual bool empty() const = 0;
+    virtual bool animated() const = 0;
+    virtual void start(GIFTimer *timer) = 0;
+    virtual void touch()
+    {
+    }
+    virtual std::optional<QPixmap> current() const = 0;
+    virtual std::optional<QSize> frameSize() const = 0;
+
+    pajlada::Signals::ScopedConnection gifTimerConnection;
+};
+
+/// Stores all decoded frames in memory.
+struct Frames::CachedFrames : Storage {
+    CachedFrames() = default;
+    explicit CachedFrames(QList<Frame> frames)
+        : items(std::move(frames))
+    {
+    }
+    ~CachedFrames() override = default;
+    CachedFrames(const CachedFrames &) = delete;
+    CachedFrames &operator=(const CachedFrames &) = delete;
+    CachedFrames(CachedFrames &&) = delete;
+    CachedFrames &operator=(CachedFrames &&) = delete;
+
+    int64_t memoryUsage() const override
+    {
+        int64_t usage = 0;
+        for (const auto &frame : this->items)
+        {
+            auto sz = frame.image.size();
+            auto area = sz.width() * sz.height();
+            auto memory = area * frame.image.depth() / 8;
+            usage += memory;
+        }
+        return usage;
+    }
+
+    bool empty() const override
+    {
+        return this->items.empty();
+    }
+
+    bool animated() const override
+    {
+        return this->items.size() > 1;
+    }
+
+    void start(GIFTimer *timer) override
+    {
+        if (!this->animated())
+        {
+            return;
+        }
+
+        this->gifTimerConnection = timer->signal.connect([this] {
+            this->advance();
+        });
+
+        const auto totalLength =
+            std::accumulate(this->items.begin(), this->items.end(), 0UL,
+                            [](auto init, auto &&frame) {
+                                return init + frame.duration;
+                            });
+        if (totalLength == 0)
+        {
+            this->durationOffset = 0;
+        }
+        else
+        {
+            this->durationOffset =
+                std::min<int>(int(timer->position() % totalLength), 60000);
+        }
+        this->processOffset();
+    }
+
+    void advance()
+    {
+        this->durationOffset += GIF_FRAME_LENGTH;
+        this->processOffset();
+    }
+
+    void processOffset()
+    {
+        if (this->items.isEmpty())
+        {
+            return;
+        }
+
+        while (true)
+        {
+            this->index %= this->items.size();
+            if (this->durationOffset > this->items.at(this->index).duration)
+            {
+                this->durationOffset -= this->items.at(this->index).duration;
+                this->index = (this->index + 1) % this->items.size();
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+
+    std::optional<QPixmap> current() const override
+    {
+        if (this->empty())
+        {
+            return std::nullopt;
+        }
+        return this->items[this->index].image;
+    }
+
+    std::optional<QSize> frameSize() const override
+    {
+        if (this->empty())
+        {
+            return std::nullopt;
+        }
+        return this->items.front().image.size();
+    }
+
+    QList<Frame> items;
+    QList<Frame>::size_type index{0};
+    int durationOffset{0};
+};
+
+struct Frames::MovieFrames : Storage {
+    MovieFrames(QByteArray bytes, bool isAnimated)
         : data(std::move(bytes))
         , buffer(&this->data)
-        , animated(isAnimated)
+        , animatedFrame(isAnimated)
     {
         this->buffer.open(QIODevice::ReadOnly);
         this->movie.setDevice(&this->buffer);
         this->movie.setCacheMode(QMovie::CacheNone);
-        QObject::connect(&this->movie, &QMovie::error, [this] {
-            this->decodeFailed = true;
+    }
+
+    bool initialize()
+    {
+        if (!this->movie.isValid() || !this->movie.jumpToFrame(0))
+        {
+            return false;
+        }
+        this->nextDelay = normalizedFrameDuration(this->movie.nextFrameDelay());
+        return true;
+    }
+
+    int64_t memoryUsage() const override
+    {
+        const auto pixmap = this->movie.currentPixmap();
+        return this->data.size() +
+               (int64_t(pixmap.width()) * int64_t(pixmap.height()) *
+                int64_t(pixmap.depth()) / 8);
+    }
+
+    bool empty() const override
+    {
+        return this->movie.currentPixmap().isNull();
+    }
+
+    bool animated() const override
+    {
+        return this->animatedFrame;
+    }
+
+    void start(GIFTimer *timer) override
+    {
+        if (!this->animatedFrame || this->finished ||
+            this->gifTimerConnection.isConnected())
+        {
+            return;
+        }
+        this->gifTimerConnection = timer->signal.connect([this] {
+            this->advance();
         });
     }
 
+    void advance()
+    {
+        if (this->finished)
+        {
+            return;
+        }
+        if (std::chrono::steady_clock::now() - this->lastUsed >
+            MOVIE_PAUSE_AFTER)
+        {
+            this->gifTimerConnection = pajlada::Signals::ScopedConnection{};
+            return;
+        }
+
+        this->elapsed += GIF_FRAME_LENGTH;
+        while (this->elapsed >= this->nextDelay)
+        {
+            this->elapsed -= this->nextDelay;
+            if (!this->movie.jumpToNextFrame())
+            {
+                this->finished = true;
+                this->gifTimerConnection = pajlada::Signals::ScopedConnection{};
+                return;
+            }
+            this->nextDelay =
+                normalizedFrameDuration(this->movie.nextFrameDelay());
+        }
+    }
+
+    void touch() override
+    {
+        this->lastUsed = std::chrono::steady_clock::now();
+        if (auto *app = tryGetApp())
+        {
+            this->start(app->getEmotes()->getGIFTimer());
+        }
+    }
+
+    std::optional<QPixmap> current() const override
+    {
+        const auto pixmap = this->movie.currentPixmap();
+        if (pixmap.isNull())
+        {
+            return std::nullopt;
+        }
+        return pixmap;
+    }
+
+    std::optional<QSize> frameSize() const override
+    {
+        if (const auto pixmap = this->current())
+        {
+            return pixmap->size();
+        }
+        return std::nullopt;
+    }
+
+    // This order is important for destruction; movie uses buffer, buffer uses data.
     QByteArray data;
     QBuffer buffer;
     QMovie movie;
-    pajlada::Signals::Connection gifTimerConnection;
     std::chrono::steady_clock::time_point lastUsed =
         std::chrono::steady_clock::now();
     int elapsed = 0;
     int nextDelay = 100;
-    bool animated = false;
+    bool animatedFrame = false;
     bool finished = false;
-    bool decodeFailed = false;
 };
 
 Frames::Frames()
+    : storage_(std::make_unique<CachedFrames>())
 {
     DebugCount::increase(DebugObject::Image);
 }
 
 Frames::Frames(QList<Frame> &&frames)
-    : items_(std::move(frames))
+    : storage_(std::make_unique<CachedFrames>(std::move(frames)))
 {
     assertInGuiThread();
     auto *app = tryGetApp();
@@ -105,28 +337,7 @@ Frames::Frames(QList<Frame> &&frames)
     {
         DebugCount::increase(DebugObject::AnimatedImage);
 
-        this->gifTimerConnection_ =
-            app->getEmotes()->getGIFTimer()->signal.connect([this] {
-                this->advance();
-            });
-
-        auto totalLength =
-            std::accumulate(this->items_.begin(), this->items_.end(), 0UL,
-                            [](auto init, auto &&frame) {
-                                return init + frame.duration;
-                            });
-
-        if (totalLength == 0)
-        {
-            this->durationOffset_ = 0;
-        }
-        else
-        {
-            this->durationOffset_ = std::min<int>(
-                int(app->getEmotes()->getGIFTimer()->position() % totalLength),
-                60000);
-        }
-        this->processOffset();
+        this->storage_->start(app->getEmotes()->getGIFTimer());
     }
 
     DebugCount::increase(DebugObject::BytesImageCurrent, this->memoryUsage());
@@ -134,24 +345,26 @@ Frames::Frames(QList<Frame> &&frames)
 }
 
 Frames::Frames(QByteArray data, bool animated)
-    : movie_(std::make_unique<Movie>(std::move(data), animated))
+    : storage_(std::make_unique<MovieFrames>(std::move(data), animated))
 {
     assertInGuiThread();
     DebugCount::increase(DebugObject::Image);
 
-    if (!this->movie_->movie.isValid() || !this->movie_->movie.jumpToFrame(0))
+    auto *movieFrames = static_cast<MovieFrames *>(this->storage_.get());
+    if (!movieFrames->initialize())
     {
-        this->movie_.reset();
+        this->storage_ = std::make_unique<CachedFrames>();
         return;
     }
 
-    this->movie_->nextDelay =
-        normalizedFrameDuration(this->movie_->movie.nextFrameDelay());
     DebugCount::increase(DebugObject::LoadedImage);
     if (this->animated())
     {
         DebugCount::increase(DebugObject::AnimatedImage);
-        this->connectMovieTimer();
+        if (auto *app = tryGetApp())
+        {
+            this->storage_->start(app->getEmotes()->getGIFTimer());
+        }
     }
     DebugCount::increase(DebugObject::BytesImageCurrent, this->memoryUsage());
     DebugCount::increase(DebugObject::BytesImageLoaded, this->memoryUsage());
@@ -160,10 +373,6 @@ Frames::Frames(QByteArray data, bool animated)
 Frames::~Frames()
 {
     assertInGuiThread();
-    if (this->movie_)
-    {
-        this->movie_->gifTimerConnection.disconnect();
-    }
     DebugCount::decrease(DebugObject::Image);
     if (!this->empty())
     {
@@ -176,89 +385,11 @@ Frames::~Frames()
     }
     DebugCount::decrease(DebugObject::BytesImageCurrent, this->memoryUsage());
     DebugCount::increase(DebugObject::BytesImageUnloaded, this->memoryUsage());
-
-    this->gifTimerConnection_.disconnect();
 }
 
 int64_t Frames::memoryUsage() const
 {
-    if (this->movie_)
-    {
-        const auto pixmap = this->movie_->movie.currentPixmap();
-        return this->movie_->data.size() +
-               (int64_t(pixmap.width()) * int64_t(pixmap.height()) *
-                int64_t(pixmap.depth()) / 8);
-    }
-
-    int64_t usage = 0;
-    for (const auto &frame : this->items_)
-    {
-        auto sz = frame.image.size();
-        auto area = sz.width() * sz.height();
-        auto memory = area * frame.image.depth() / 8;
-
-        usage += memory;
-    }
-    return usage;
-}
-
-void Frames::advance()
-{
-    if (this->movie_)
-    {
-        if (this->movie_->finished)
-        {
-            return;
-        }
-        if (std::chrono::steady_clock::now() - this->movie_->lastUsed >
-            MOVIE_PAUSE_AFTER)
-        {
-            this->movie_->gifTimerConnection.disconnect();
-            return;
-        }
-
-        this->movie_->elapsed += GIF_FRAME_LENGTH;
-        while (this->movie_->elapsed >= this->movie_->nextDelay)
-        {
-            this->movie_->elapsed -= this->movie_->nextDelay;
-            this->movie_->decodeFailed = false;
-            if (!this->movie_->movie.jumpToNextFrame())
-            {
-                this->movie_->finished = true;
-                this->movie_->gifTimerConnection.disconnect();
-                return;
-            }
-            this->movie_->nextDelay =
-                normalizedFrameDuration(this->movie_->movie.nextFrameDelay());
-        }
-        return;
-    }
-
-    this->durationOffset_ += GIF_FRAME_LENGTH;
-    this->processOffset();
-}
-
-void Frames::processOffset()
-{
-    if (this->items_.isEmpty())
-    {
-        return;
-    }
-
-    while (true)
-    {
-        this->index_ %= this->items_.size();
-
-        if (this->durationOffset_ > this->items_[this->index_].duration)
-        {
-            this->durationOffset_ -= this->items_[this->index_].duration;
-            this->index_ = (this->index_ + 1) % this->items_.size();
-        }
-        else
-        {
-            break;
-        }
-    }
+    return this->storage_->memoryUsage();
 }
 
 void Frames::clear()
@@ -275,88 +406,32 @@ void Frames::clear()
     {
         DebugCount::decrease(DebugObject::AnimatedImage);
     }
-    if (this->movie_)
-    {
-        this->movie_->gifTimerConnection.disconnect();
-    }
-    this->items_.clear();
-    this->movie_.reset();
-    this->index_ = 0;
-    this->durationOffset_ = 0;
-    this->gifTimerConnection_.disconnect();
+    this->storage_ = std::make_unique<CachedFrames>();
 }
 
 void Frames::touch()
 {
-    if (!this->movie_)
-    {
-        return;
-    }
-    this->movie_->lastUsed = std::chrono::steady_clock::now();
-    this->connectMovieTimer();
-}
-
-void Frames::connectMovieTimer()
-{
-    if (!this->movie_ || !this->movie_->animated || this->movie_->finished ||
-        this->movie_->gifTimerConnection.isConnected())
-    {
-        return;
-    }
-    if (auto *app = tryGetApp())
-    {
-        this->movie_->gifTimerConnection =
-            app->getEmotes()->getGIFTimer()->signal.connect([this] {
-                this->advance();
-            });
-    }
+    this->storage_->touch();
 }
 
 bool Frames::empty() const
 {
-    if (this->movie_)
-    {
-        return this->movie_->movie.currentPixmap().isNull();
-    }
-    return this->items_.empty();
+    return this->storage_->empty();
 }
 
 bool Frames::animated() const
 {
-    if (this->movie_)
-    {
-        return this->movie_->animated;
-    }
-    return this->items_.size() > 1;
+    return this->storage_->animated();
 }
 
 std::optional<QPixmap> Frames::current() const
 {
-    if (this->movie_)
-    {
-        const auto pixmap = this->movie_->movie.currentPixmap();
-        return pixmap.isNull() ? std::nullopt : std::optional<QPixmap>{pixmap};
-    }
-    if (this->items_.empty())
-    {
-        return std::nullopt;
-    }
-
-    return this->items_[this->index_].image;
+    return this->storage_->current();
 }
 
-std::optional<QPixmap> Frames::first() const
+std::optional<QSize> Frames::frameSize() const
 {
-    if (this->movie_)
-    {
-        return this->current();
-    }
-    if (this->items_.empty())
-    {
-        return std::nullopt;
-    }
-
-    return this->items_.front().image;
+    return this->storage_->frameSize();
 }
 
 QList<Frame> readFrames(QImageReader &reader, const Url &url, QSize targetSize)
@@ -747,9 +822,9 @@ int Image::width() const
         return 0;
     }
 
-    if (auto pixmap = this->frames_->first())
+    if (auto size = this->frames_->frameSize())
     {
-        return static_cast<int>(pixmap->width() * this->scale_);
+        return static_cast<int>(size->width() * this->scale_);
     }
 
     // No frames loaded, use the expected size
@@ -765,9 +840,9 @@ int Image::height() const
         return 0;
     }
 
-    if (auto pixmap = this->frames_->first())
+    if (auto size = this->frames_->frameSize())
     {
-        return static_cast<int>(pixmap->height() * this->scale_);
+        return static_cast<int>(size->height() * this->scale_);
     }
 
     // No frames loaded, use the expected size
@@ -783,9 +858,9 @@ QSizeF Image::size() const
         return {0, 0};
     }
 
-    if (auto pixmap = this->frames_->first())
+    if (auto size = this->frames_->frameSize())
     {
-        return pixmap->size().toSizeF() * this->scale_;
+        return size->toSizeF() * this->scale_;
     }
 
     // No frames loaded, use the expected size
