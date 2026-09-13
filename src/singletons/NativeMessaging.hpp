@@ -15,16 +15,9 @@
 
 namespace chatterino::nm::detail {
 
-enum class WriteManifestError : std::uint8_t {
-    FailedToCreateDirectory,
-    FailedToCreateFile,
-    FailedToWriteFile,
-};
-
-Expected<void, WriteManifestError> writeManifestTo(QString directory,
-                                                   const QString &nmDirectory,
-                                                   const QString &filename,
-                                                   const QJsonDocument &json);
+ExpectedStr<void> writeManifestTo(QString directory, const QString &nmDirectory,
+                                  const QString &filename,
+                                  const QJsonDocument &json);
 
 #ifndef Q_OS_WIN
 /// Parse `path` by replacing '~', '$XDG_CONFIG_HOME' and '$XDG_DATA_HOME'
