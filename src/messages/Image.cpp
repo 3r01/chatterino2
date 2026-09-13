@@ -18,6 +18,7 @@
 #include "util/PostToThread.hpp"
 
 #include <boost/functional/hash.hpp>
+#include <pajlada/signals/scoped-connection.hpp>
 #include <QBuffer>
 #include <QImageReader>
 #include <QNetworkAccessManager>
@@ -38,10 +39,7 @@ namespace chatterino::detail {
 
 struct Frames::Storage {
     Storage() = default;
-    virtual ~Storage()
-    {
-        this->gifTimerConnection.disconnect();
-    }
+    virtual ~Storage() = default;
     Storage(const Storage &) = delete;
     Storage &operator=(const Storage &) = delete;
     Storage(Storage &&) = delete;
@@ -54,7 +52,7 @@ struct Frames::Storage {
     virtual std::optional<QPixmap> current() const = 0;
     virtual std::optional<QSize> size() const = 0;
 
-    pajlada::Signals::Connection gifTimerConnection;
+    pajlada::Signals::ScopedConnection gifTimerConnection;
 };
 
 struct Frames::CachedFrames : Storage {
