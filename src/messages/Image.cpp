@@ -55,6 +55,7 @@ struct Frames::Storage {
     pajlada::Signals::ScopedConnection gifTimerConnection;
 };
 
+/// Stores all decoded frames in memory.
 struct Frames::CachedFrames : Storage {
     CachedFrames() = default;
     explicit CachedFrames(QList<Frame> frames)

@@ -55,7 +55,8 @@ TEST(Image, StaticCachedFrame)
 {
     ImageApplication app;
     detail::Frames frames(QList<detail::Frame>{
-        {.image = makePixmap({1, 1}, Qt::red), .duration = 20}});
+        {.image = makePixmap({1, 1}, Qt::red), .duration = 20},
+    });
     EXPECT_FALSE(frames.empty());
     EXPECT_FALSE(frames.animated());
 
@@ -68,7 +69,8 @@ TEST(Image, CachedFramesUseSharedTimer)
     ImageApplication app;
     detail::Frames frames(QList<detail::Frame>{
         {.image = makePixmap({1, 1}, Qt::red), .duration = 20},
-        {.image = makePixmap({2, 2}, Qt::blue), .duration = 60}});
+        {.image = makePixmap({2, 2}, Qt::blue), .duration = 60},
+    });
     ASSERT_TRUE(frames.animated());
     ASSERT_EQ(frames.frameSize(), QSize(1, 1));
 
@@ -87,7 +89,8 @@ TEST(Image, CachedFramesClearDisconnectsTimer)
     {
         detail::Frames frames(QList<detail::Frame>{
             {.image = makePixmap({1, 1}, Qt::red), .duration = 20},
-            {.image = makePixmap({1, 1}, Qt::blue), .duration = 60}});
+            {.image = makePixmap({1, 1}, Qt::blue), .duration = 60},
+        });
         frames.clear();
         EXPECT_TRUE(frames.empty());
         EXPECT_FALSE(frames.animated());

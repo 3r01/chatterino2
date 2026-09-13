@@ -7,7 +7,6 @@
 #include "common/Aliases.hpp"
 #include "util/DebugCount.hpp"
 
-#include <pajlada/signals/signal.hpp>
 #include <QList>
 #include <QPixmap>
 #include <QString>
