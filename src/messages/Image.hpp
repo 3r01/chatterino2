@@ -50,17 +50,15 @@ public:
     void clear();
     bool empty() const;
     bool animated() const;
-    void advance();
     std::optional<QPixmap> current() const;
     std::optional<QSize> size() const;
 
 private:
+    struct Storage;
+    struct CachedFrames;
+
     int64_t memoryUsage() const;
-    void processOffset();
-    QList<Frame> items_;
-    QList<Frame>::size_type index_{0};
-    int durationOffset_{0};
-    pajlada::Signals::Connection gifTimerConnection_;
+    std::unique_ptr<Storage> storage_;
 };
 
 QList<Frame> readFrames(QImageReader &reader, const Url &url);
