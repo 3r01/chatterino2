@@ -950,7 +950,7 @@ void GeneralPage::initLayout(GeneralPageView &layout)
         formatRichNamedLink(FIREFOX_EXTENSION_LINK, "Download for Firefox"));
 
 #ifdef Q_OS_WIN
-    if (Modes{getApp()->getArgs()}.isPortable)
+    if (getApp()->getModes().isPortable)
     {
         layout.addDescription(
             "Portable Chatterino does not register browser integration "
