@@ -343,6 +343,9 @@ public:
     std::unique_ptr<MessageElement> clone() const override;
 
     const MessageColor &color() const noexcept;
+    void addToContainer(MessageLayoutContainer &container,
+                        const MessageLayoutContext &ctx,
+                        MessageElement &creator);
     FontStyle fontStyle() const noexcept;
 
     void appendText(QStringView text);
@@ -559,6 +562,7 @@ public:
     void addToContainer(MessageLayoutContainer &container,
                         const MessageLayoutContext &ctx) override;
     EmotePtr getEmote() const;
+    bool isIgnored() const;
 
     QJsonObject toJson() const override;
     std::string_view type() const override;
