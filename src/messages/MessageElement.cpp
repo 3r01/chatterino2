@@ -236,7 +236,8 @@ std::unique_ptr<MessageElement> ImageElement::clone() const
 TwitchGifElement::TwitchGifElement(ImagePtr image, QString id, QString title,
                                    Url sourceUrl, Url previewUrl,
                                    QSize previewSize)
-    : ImageElement(std::move(image), MessageElementFlag::TwitchGif)
+    : ScalingImageElement(ImageSet{std::move(image)},
+                          MessageElementFlag::TwitchGif, title)
     , id_(std::move(id))
     , title_(std::move(title))
     , sourceUrl_(std::move(sourceUrl))
@@ -267,14 +268,40 @@ const Url &TwitchGifElement::previewUrl() const
 
 QSize TwitchGifElement::previewSize() const
 {
-    return this->previewSize_.isEmpty() ? this->image()->size().toSize()
-                                        : this->previewSize_;
+    return this->previewSize_.isEmpty()
+               ? this->images().getImage1()->size().toSize()
+               : this->previewSize_;
+}
+
+void TwitchGifElement::addToContainer(MessageLayoutContainer &container,
+                                      const MessageLayoutContext &ctx)
+{
+    if (!this->matchesFlags(ctx.flags))
+    {
+        return;
+    }
+
+    const auto scale = getSettings()->twitchGifScale.getValue();
+    const auto &image =
+        this->images().getImageOrLoaded(container.getImageScale() * scale);
+    if (image->isEmpty())
+    {
+        return;
+    }
+
+    auto size = image->size() * container.getScale() * scale;
+    if (size.width() > container.remainingWidth())
+    {
+        size *= container.remainingWidth() / size.width();
+    }
+
+    container.addElement(new ImageLayoutElement(*this, image, size));
 }
 
 std::unique_ptr<MessageElement> TwitchGifElement::clone() const
 {
     auto gif = std::make_unique<TwitchGifElement>(
-        this->image(), this->id_, this->title_, this->sourceUrl_,
+        this->images().getImage1(), this->id_, this->title_, this->sourceUrl_,
         this->previewUrl_, this->previewSize_);
     gif->cloneFrom(*this);
     return gif;

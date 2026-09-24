@@ -255,28 +255,6 @@ private:
     ImagePtr image_;
 };
 
-class TwitchGifElement : public ImageElement
-{
-public:
-    TwitchGifElement(ImagePtr image, QString id, QString title, Url sourceUrl,
-                     Url previewUrl, QSize previewSize);
-
-    const QString &id() const;
-    const QString &title() const;
-    const Url &sourceUrl() const;
-    const Url &previewUrl() const;
-    QSize previewSize() const;
-
-    std::unique_ptr<MessageElement> clone() const override;
-
-private:
-    QString id_;
-    QString title_;
-    Url sourceUrl_;
-    Url previewUrl_;
-    QSize previewSize_;
-};
-
 // contains a image with a circular background color
 class CircularImageElement : public MessageElement
 {
@@ -800,6 +778,31 @@ public:
 private:
     ImageSet images_;
     QString copyText_;
+};
+
+class TwitchGifElement : public ScalingImageElement
+{
+public:
+    TwitchGifElement(ImagePtr image, QString id, QString title, Url sourceUrl,
+                     Url previewUrl, QSize previewSize);
+
+    const QString &id() const;
+    const QString &title() const;
+    const Url &sourceUrl() const;
+    const Url &previewUrl() const;
+    QSize previewSize() const;
+
+    void addToContainer(MessageLayoutContainer &container,
+                        const MessageLayoutContext &ctx) override;
+
+    std::unique_ptr<MessageElement> clone() const override;
+
+private:
+    QString id_;
+    QString title_;
+    Url sourceUrl_;
+    Url previewUrl_;
+    QSize previewSize_;
 };
 
 class ReplyCurveElement : public MessageElement
