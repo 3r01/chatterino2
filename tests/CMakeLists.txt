@@ -74,6 +74,7 @@ set(test_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/src/RecentMessages.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/Aliases.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/ChannelHelpers.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/Nickname.cpp
     # Add your new file above this line!
 
     ${CMAKE_CURRENT_LIST_DIR}/src/lib/Snapshot.cpp

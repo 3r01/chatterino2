@@ -15,6 +15,7 @@
 #include "controllers/ignores/IgnorePhrase.hpp"
 #include "controllers/moderationactions/ModerationAction.hpp"
 #include "controllers/nicknames/Nickname.hpp"
+#include "controllers/userdata/UserDataController.hpp"
 #include "debug/Benchmark.hpp"
 #include "pajlada/settings/signalargs.hpp"
 #include "util/Backup.hpp"
@@ -141,7 +142,9 @@ bool Settings::isMutedChannel(const QString &channelName)
     return false;
 }
 
-std::optional<QString> Settings::matchNickname(const QString &usernameText)
+std::optional<QString> Settings::matchNickname(
+    const QString &usernameText, const QString &userID,
+    const IUserDataController *userData)
 {
     auto nicknames = this->nicknames.readOnly();
 
@@ -150,6 +153,15 @@ std::optional<QString> Settings::matchNickname(const QString &usernameText)
         if (auto nicknameText = nickname.match(usernameText))
         {
             return nicknameText;
+        }
+    }
+
+    if (!userID.isEmpty() && userData != nullptr)
+    {
+        const auto data = userData->getUser(userID);
+        if (data && !data->nickname.isEmpty())
+        {
+            return data->nickname;
         }
     }
 
