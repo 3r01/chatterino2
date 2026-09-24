@@ -21,7 +21,6 @@
 #include <pajlada/signals/scoped-connection.hpp>
 #include <QBuffer>
 #include <QImageReader>
-#include <QMovie>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -35,24 +34,14 @@
 const auto IMAGE_POOL_CLEANUP_INTERVAL = std::chrono::minutes(1);
 // Duration since last usage of Image pixmap before expiration of frames
 const auto IMAGE_POOL_IMAGE_LIFETIME = std::chrono::minutes(10);
-const auto MOVIE_PAUSE_AFTER = std::chrono::seconds(1);
-constexpr qsizetype MAX_MOVIE_DATA_BYTES = 20 * 1024 * 1024;
-constexpr qint64 MAX_MOVIE_FRAME_BYTES = 4 * 1024 * 1024;
+
+// Stop decoding dynamic frames shortly after they are no longer painted.
+const auto DYNAMIC_FRAMES_PAUSE_AFTER = std::chrono::seconds(1);
+// Dynamic frames retain the encoded file for playback, so limit it separately
+// from the decoded frame size.
+constexpr int MAX_DYNAMIC_IMAGE_DATA_BYTES = 20 * 1024 * 1024;
 
 namespace chatterino::detail {
-
-namespace {
-
-int normalizedFrameDuration(int duration)
-{
-    if (duration <= 10)
-    {
-        return 100;
-    }
-    return std::max<int>(GIF_FRAME_LENGTH, duration);
-}
-
-}  // namespace
 
 struct Frames::Storage {
     Storage() = default;
@@ -65,8 +54,10 @@ struct Frames::Storage {
     virtual int64_t memoryUsage() const = 0;
     virtual bool empty() const = 0;
     virtual bool animated() const = 0;
-    virtual void start(GIFTimer *timer) = 0;
-    virtual void touch()
+    virtual void start(GIFTimer * /*unused*/)
+    {
+    }
+    virtual void onPaint(std::chrono::steady_clock::time_point /*paintTime*/)
     {
     }
     virtual std::optional<QPixmap> current() const = 0;
@@ -190,122 +181,182 @@ struct Frames::CachedFrames : Storage {
     int durationOffset{0};
 };
 
-struct Frames::MovieFrames : Storage {
-    MovieFrames(QByteArray bytes, bool isAnimated)
+struct Frames::DynamicFrames : Storage {
+    explicit DynamicFrames(QByteArray bytes)
         : data(std::move(bytes))
         , buffer(&this->data)
-        , animatedFrame(isAnimated)
     {
         this->buffer.open(QIODevice::ReadOnly);
-        this->movie.setDevice(&this->buffer);
-        this->movie.setCacheMode(QMovie::CacheNone);
+        this->reader = std::make_unique<QImageReader>(&this->buffer);
     }
 
-    bool initialize()
+    ~DynamicFrames() override = default;
+    DynamicFrames(const DynamicFrames &) = delete;
+    DynamicFrames &operator=(const DynamicFrames &) = delete;
+    DynamicFrames(DynamicFrames &&) = delete;
+    DynamicFrames &operator=(DynamicFrames &&) = delete;
+
+    bool readNext()
     {
-        if (!this->movie.isValid() || !this->movie.jumpToFrame(0))
+        auto image = this->reader->read();
+        if (image.isNull())
         {
             return false;
         }
-        this->nextDelay = normalizedFrameDuration(this->movie.nextFrameDelay());
+        this->pixmap = QPixmap::fromImage(std::move(image));
+        return !this->pixmap.isNull();
+    }
+
+    int frameDelay() const
+    {
+        if (!this->reader->supportsAnimation())
+        {
+            return 1000;
+        }
+        return this->reader->nextImageDelay();
+    }
+
+    bool decodeNext()
+    {
+        if (this->frameIndex + 1 < this->frameCount)
+        {
+            if (!this->readNext())
+            {
+                return false;
+            }
+            ++this->frameIndex;
+            return true;
+        }
+        if (this->remainingLoops == 0)
+        {
+            return false;
+        }
+        if (this->remainingLoops > 0)
+        {
+            --this->remainingLoops;
+        }
+        this->reader.reset();
+        this->buffer.seek(0);
+        this->reader = std::make_unique<QImageReader>(&this->buffer);
+        if (!this->readNext())
+        {
+            return false;
+        }
+        this->frameIndex = 0;
         return true;
     }
 
     int64_t memoryUsage() const override
     {
-        const auto pixmap = this->movie.currentPixmap();
         return this->data.size() +
-               (int64_t(pixmap.width()) * int64_t(pixmap.height()) *
-                int64_t(pixmap.depth()) / 8);
+               (int64_t(this->pixmap.width()) * this->pixmap.height() *
+                this->pixmap.depth() / 8);
     }
 
     bool empty() const override
     {
-        return this->movie.currentPixmap().isNull();
+        return this->pixmap.isNull();
     }
 
     bool animated() const override
     {
-        return this->animatedFrame;
+        return this->frameCount > 1;
     }
 
     void start(GIFTimer *timer) override
     {
-        if (!this->animatedFrame || this->finished ||
-            this->gifTimerConnection.isConnected())
+        if (this->animated())
         {
-            return;
+            this->gifTimerConnection = timer->signal.connect([this] {
+                this->advance();
+            });
         }
-        this->gifTimerConnection = timer->signal.connect([this] {
-            this->advance();
-        });
     }
 
     void advance()
     {
-        if (this->finished)
+        if (this->finished || this->paused)
         {
             return;
         }
-        if (std::chrono::steady_clock::now() - this->lastUsed >
-            MOVIE_PAUSE_AFTER)
+        const auto now = std::chrono::steady_clock::now();
+        if (now - this->lastUsed > DYNAMIC_FRAMES_PAUSE_AFTER)
         {
-            this->gifTimerConnection = pajlada::Signals::ScopedConnection{};
+            this->paused = true;
+            return;
+        }
+        if (now < this->nextFrame)
+        {
             return;
         }
 
-        this->elapsed += GIF_FRAME_LENGTH;
-        while (this->elapsed >= this->nextDelay)
+        // Avoid decoding a backlog of frames after a stall.
+        this->nextFrame = std::max(
+            this->nextFrame, now - std::chrono::milliseconds(GIF_FRAME_LENGTH));
+
+        while (this->nextFrame <= now)
         {
-            this->elapsed -= this->nextDelay;
-            if (!this->movie.jumpToNextFrame())
+            if (!this->decodeNext())
             {
                 this->finished = true;
                 this->gifTimerConnection = pajlada::Signals::ScopedConnection{};
                 return;
             }
-            this->nextDelay =
-                normalizedFrameDuration(this->movie.nextFrameDelay());
+            const auto delay = this->frameDelay();
+            this->nextFrame += std::chrono::milliseconds(delay);
+            if (delay == 0)
+            {
+                this->nextFrame = std::chrono::steady_clock::now();
+                break;
+            }
         }
     }
 
-    void touch() override
+    void onPaint(std::chrono::steady_clock::time_point paintTime) override
     {
-        this->lastUsed = std::chrono::steady_clock::now();
-        if (auto *app = tryGetApp())
+        if (!this->animated() || this->finished)
         {
-            this->start(app->getEmotes()->getGIFTimer());
+            return;
         }
+        if (this->paused ||
+            paintTime - this->lastUsed > DYNAMIC_FRAMES_PAUSE_AFTER)
+        {
+            this->nextFrame =
+                paintTime + std::chrono::milliseconds(this->frameDelay());
+            this->paused = false;
+        }
+        this->lastUsed = paintTime;
     }
 
     std::optional<QPixmap> current() const override
     {
-        const auto pixmap = this->movie.currentPixmap();
-        if (pixmap.isNull())
+        if (this->empty())
         {
             return std::nullopt;
         }
-        return pixmap;
+        return this->pixmap;
     }
 
     std::optional<QSize> frameSize() const override
     {
-        if (const auto pixmap = this->current())
+        if (this->empty())
         {
-            return pixmap->size();
+            return std::nullopt;
         }
-        return std::nullopt;
+        return this->pixmap.size();
     }
 
-    // This order is important for destruction; movie uses buffer, buffer uses data.
+    // This order is important for destruction; reader uses buffer, buffer uses data.
     QByteArray data;
     QBuffer buffer;
-    QMovie movie;
-    std::chrono::steady_clock::time_point lastUsed =
-        std::chrono::steady_clock::now();
-    int elapsed = 0;
-    int nextDelay = 100;
-    bool animatedFrame = false;
+    std::unique_ptr<QImageReader> reader;
+    QPixmap pixmap;
+    std::chrono::steady_clock::time_point lastUsed;
+    std::chrono::steady_clock::time_point nextFrame;
+    int frameCount = 0;
+    int frameIndex = 0;
+    int remainingLoops = 0;
+    bool paused = true;
     bool finished = false;
 };
 
@@ -344,19 +395,21 @@ Frames::Frames(QList<Frame> &&frames)
     DebugCount::increase(DebugObject::BytesImageLoaded, this->memoryUsage());
 }
 
-Frames::Frames(QByteArray data, bool animated)
-    : storage_(std::make_unique<MovieFrames>(std::move(data), animated))
+Frames::Frames(QByteArray data)
+    : Frames()
 {
     assertInGuiThread();
-    DebugCount::increase(DebugObject::Image);
-
-    auto *movieFrames = static_cast<MovieFrames *>(this->storage_.get());
-    if (!movieFrames->initialize())
+    auto frames = std::make_unique<DynamicFrames>(std::move(data));
+    if (!frames->reader->canRead() || !frames->readNext())
     {
-        this->storage_ = std::make_unique<CachedFrames>();
+        qCDebug(chatterinoImage)
+            << "Error reading image:" << frames->reader->errorString();
         return;
     }
 
+    frames->frameCount = frames->reader->imageCount();
+    frames->remainingLoops = frames->reader->loopCount();
+    this->storage_ = std::move(frames);
     DebugCount::increase(DebugObject::LoadedImage);
     if (this->animated())
     {
@@ -409,9 +462,9 @@ void Frames::clear()
     this->storage_ = std::make_unique<CachedFrames>();
 }
 
-void Frames::touch()
+void Frames::onPaint(std::chrono::steady_clock::time_point paintTime)
 {
-    this->storage_->touch();
+    this->storage_->onPaint(paintTime);
 }
 
 bool Frames::empty() const
@@ -456,7 +509,6 @@ QList<Frame> readFrames(QImageReader &reader, const Url &url, QSize targetSize)
         {
             pixmap = QPixmap::fromImageReader(&reader);
         }
-
         if (!pixmap.isNull())
         {
             // It seems that browsers have special logic for fast animations.
@@ -464,8 +516,12 @@ QList<Frame> readFrames(QImageReader &reader, const Url &url, QSize targetSize)
             // a duration of 100 ms for any frames that specify a duration of <= 10 ms.
             // See http://webkit.org/b/36082 for more information.
             // https://github.com/SevenTV/chatterino7/issues/46#issuecomment-1010595231
-            const auto duration =
-                normalizedFrameDuration(reader.nextImageDelay());
+            int duration = reader.nextImageDelay();
+            if (duration <= 10)
+            {
+                duration = 100;
+            }
+            duration = std::max(20, duration);
             frames.append(Frame{
                 .image = std::move(pixmap),
                 .duration = duration,
@@ -482,17 +538,29 @@ QList<Frame> readFrames(QImageReader &reader, const Url &url, QSize targetSize)
     return frames;
 }
 
-void assignFrames(std::weak_ptr<Image> weak, QList<Frame> parsed)
+void assignFrames(std::weak_ptr<Image> weak, QList<Frame> parsed,
+                  QByteArray dynamicData)
 {
     static bool isPushQueued;
 
-    auto cb = [parsed = std::move(parsed), weak = std::move(weak)]() mutable {
+    auto cb = [parsed = std::move(parsed), dynamicData = std::move(dynamicData),
+               weak = std::move(weak)]() mutable {
         auto shared = weak.lock();
         if (!shared)
         {
             return;
         }
-        shared->frames_ = std::make_unique<detail::Frames>(std::move(parsed));
+        if (dynamicData.isEmpty())
+        {
+            shared->frames_ =
+                std::make_unique<detail::Frames>(std::move(parsed));
+        }
+        else
+        {
+            shared->frames_ =
+                std::make_unique<detail::Frames>(std::move(dynamicData));
+            shared->empty_ = shared->frames_->empty();
+        }
 
         // Avoid too many layouts in one event-loop iteration
         //
@@ -518,30 +586,6 @@ void assignFrames(std::weak_ptr<Image> weak, QList<Frame> parsed)
         }
     };
 
-    postToGuiThread(cb);
-}
-
-void assignMovieFrames(std::weak_ptr<Image> weak, QByteArray data,
-                       bool animated)
-{
-    auto cb = [data = std::move(data), animated,
-               weak = std::move(weak)]() mutable {
-        auto shared = weak.lock();
-        if (!shared)
-        {
-            return;
-        }
-        shared->frames_ =
-            std::make_unique<detail::Frames>(std::move(data), animated);
-        if (shared->frames_->empty())
-        {
-            shared->empty_ = true;
-        }
-        if (auto *app = tryGetApp())
-        {
-            app->getWindows()->forceLayoutChannelViews();
-        }
-    };
     postToGuiThread(cb);
 }
 
@@ -601,12 +645,14 @@ ImagePtr Image::fromUrl(const Url &url, qreal scale, QSize expectedSize)
     return shared;
 }
 
-ImagePtr Image::fromUrlAnimated(const Url &url, qreal scale, QSize expectedSize)
+ImagePtr Image::fromUrlWithDynamicFrames(const Url &url, qreal scale,
+                                         QSize expectedSize)
 {
+    // Cache images with dynamic frames separately.
     static std::unordered_map<Url, std::weak_ptr<Image>> cache;
     static std::mutex mutex;
 
-    std::lock_guard<std::mutex> lock(mutex);
+    std::scoped_lock lock(mutex);
     auto shared = cache[url].lock();
     if (!shared)
     {
@@ -684,22 +730,12 @@ Image::Image()
 {
 }
 
-Image::Image(const Url &url, qreal scale, QSize expectedSize)
-    : url_(url)
+Image::Image(Url url, qreal scale, QSize expectedSize, bool useDynamicFrames)
+    : url_(std::move(url))
     , scale_(scale)
     , expectedSize_(expectedSize.isValid() ? expectedSize
                                            : (QSize(16, 16) * scale))
-    , shouldLoad_(true)
-    , frames_(std::make_unique<detail::Frames>())
-{
-}
-
-Image::Image(const Url &url, qreal scale, QSize expectedSize, bool useQMovie)
-    : url_(url)
-    , scale_(scale)
-    , expectedSize_(expectedSize.isValid() ? expectedSize
-                                           : (QSize(16, 16) * scale))
-    , useQMovie_(useQMovie)
+    , useDynamicFrames_(useDynamicFrames)
     , shouldLoad_(true)
     , frames_(std::make_unique<detail::Frames>())
 {
@@ -770,8 +806,7 @@ std::optional<QPixmap> Image::pixmapOrLoad() const
     this->lastUsed_ = std::chrono::steady_clock::now();
 
     this->load();
-
-    this->frames_->touch();
+    this->frames_->onPaint(this->lastUsed_);
 
     return this->frames_->current();
 }
@@ -883,9 +918,11 @@ void Image::actuallyLoad()
             assert(!isAppAboutToQuit());
 
             auto data = result.getData();
-            if (shared->useQMovie_ && data.size() > MAX_MOVIE_DATA_BYTES)
+            if (shared->useDynamicFrames_ &&
+                data.size() > MAX_DYNAMIC_IMAGE_DATA_BYTES)
             {
-                qCDebug(chatterinoImage) << "movie data too large in RAM";
+                qCDebug(chatterinoImage)
+                    << "dynamic image data too large" << shared->url().string;
                 shared->empty_ = true;
                 return;
             }
@@ -919,23 +956,24 @@ void Image::actuallyLoad()
                 return;
             }
 
-            const auto frameBytes =
-                int64_t(size.width()) * int64_t(size.height()) * 4;
-            if (shared->useQMovie_)
+            if (shared->useDynamicFrames_)
             {
-                if (frameBytes > MAX_MOVIE_FRAME_BYTES)
+                // Check the memory needed for one decoded frame.
+                if (double(size.width()) * double(size.height()) * 4.0 >
+                    double(Image::maxBytesRam))
                 {
-                    qCDebug(chatterinoImage) << "movie frame too large in RAM";
+                    qCDebug(chatterinoImage) << "dynamic image frame too large"
+                                             << shared->url().string;
                     shared->empty_ = true;
                     return;
                 }
-                detail::assignMovieFrames(shared, std::move(data),
-                                          reader.imageCount() > 1);
+                detail::assignFrames(shared, {}, std::move(data));
                 return;
             }
 
             // use "double" to prevent int overflows
-            if (double(frameBytes) * double(reader.imageCount()) >
+            if (double(size.width()) * double(size.height()) *
+                    double(reader.imageCount()) * 4.0 >
                 double(Image::maxBytesRam))
             {
                 qCDebug(chatterinoImage) << "image too large in RAM";
