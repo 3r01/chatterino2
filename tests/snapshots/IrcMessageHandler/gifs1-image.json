@@ -123,14 +123,14 @@
                 },
                 {
                     "flags": "TwitchGif",
+                    "image": "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/200.webp?cid=095d7a5dzizsiwgabonagkmigggv8v1spfai91ac3x0dsiy0&ep=v1_gifs_trending&rid=200.webp&ct=g",
                     "link": {
                         "type": "Url",
                         "value": "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/200.webp?cid=095d7a5dzizsiwgabonagkmigggv8v1spfai91ac3x0dsiy0&ep=v1_gifs_trending&rid=200.webp&ct=g"
                     },
                     "tooltip": "<span>[Y A Y Yes GIF by Djemilah Birnie]</span>",
                     "trailingSpace": true,
-                    "type": "ImageElement",
-                    "url": "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/200.webp?cid=095d7a5dzizsiwgabonagkmigggv8v1spfai91ac3x0dsiy0&ep=v1_gifs_trending&rid=200.webp&ct=g"
+                    "type": "ScalingImageElement"
                 },
                 {
                     "background": "#ffa0a0a4",

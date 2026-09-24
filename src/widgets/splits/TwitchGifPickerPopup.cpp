@@ -36,8 +36,8 @@ public:
     GifPickerItem(twitchgifs::SearchResult result,
                   std::function<void(twitchgifs::SearchResult)> action)
         : result_(std::move(result))
-        , image_(Image::fromUrlAnimated(this->result_.previewUrl, 1,
-                                        this->result_.previewSize))
+        , image_(Image::fromUrlWithDynamicFrames(this->result_.previewUrl, 1,
+                                                 this->result_.previewSize))
         , action_(std::move(action))
     {
     }

@@ -34,9 +34,9 @@
 #include "widgets/listview/GenericListModel.hpp"
 #include "widgets/listview/GenericListView.hpp"
 #include "widgets/Notebook.hpp"
+#include "widgets/Scrollbar.hpp"
 #include "widgets/splits/InputCompletionItem.hpp"
 #include "widgets/splits/InputCompletionPopup.hpp"
-#include "widgets/Scrollbar.hpp"
 #include "widgets/splits/Split.hpp"
 
 #include <QApplication>
@@ -137,6 +137,16 @@ public:
     void undoInput()
     {
         this->ui_.textEdit->undo();
+    }
+
+    bool completionPopupBlocksSendShortcut(const QString &text)
+    {
+        this->showCompletionPopup(text, CompletionKind::User);
+        QKeyEvent event(QEvent::ShortcutOverride, Qt::Key_Return,
+                        Qt::NoModifier);
+        event.ignore();
+        this->eventFilter(this, &event);
+        return event.isAccepted();
     }
 };
 
