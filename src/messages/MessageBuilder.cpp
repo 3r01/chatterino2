@@ -2099,7 +2099,7 @@ void MessageBuilder::addTwitchGif(const QString &id, const QString &sourceLink,
                 Image::fromUrlWithDynamicFrames(Url{link}, 0.7, {200, 200}), id,
                 original, Url{sourceLink}, Url{link}, QSize{})
             ->setLink(Link{Link::Url, link})
-            ->setTooltip(original.toHtmlEscaped());
+            ->setTooltip(u"<span>" % original.toHtmlEscaped() % u"</span>");
     }
     else
     {
