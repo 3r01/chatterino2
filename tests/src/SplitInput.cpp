@@ -683,6 +683,19 @@ TEST_F(PopupCycleFixture, DuplicateEmoteNamesCycleOnce)
     EXPECT_EQ(this->input.getInputText(), "zzduptwo ");
 }
 
+TEST_F(SplitInputCompletionTest, EmptyPopupDoesNotBlockSendShortcut)
+{
+    auto channel = std::make_shared<TwitchChannel>("forsen");
+    channel->addRecentChatter("pajlada");
+    this->split.setChannel(IndirectChannel{channel});
+
+    // An empty completion popup does not block the send shortcut.
+    EXPECT_FALSE(this->input.completionPopupBlocksSendShortcut("@nothing"));
+
+    // A matching completion still takes priority over sending.
+    EXPECT_TRUE(this->input.completionPopupBlocksSendShortcut("@paj"));
+}
+
 TEST_F(SplitInputCompletionTest, TabCompletionPreservesUndoHistory)
 {
     ResizingTextEdit edit;
