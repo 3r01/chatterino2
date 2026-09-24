@@ -1037,19 +1037,8 @@ void SplitInput::installTextEditEvents()
             {
                 if (popup->isVisible())
                 {
-                    const auto commandCompletions =
-                        event->key() == Qt::Key_Tab &&
-                                !event->modifiers().testFlag(Qt::ControlModifier)
-                            ? popup->selectedCommandCompletions()
-                            : std::nullopt;
                     if (popup->eventFilter(nullptr, event))
                     {
-                        if (commandCompletions)
-                        {
-                            auto [completions, index] = *commandCompletions;
-                            this->ui_.textEdit->continueCompletion(completions,
-                                                                   index);
-                        }
                         event->accept();
                         return;
                     }
@@ -1179,6 +1168,12 @@ void SplitInput::updateCompletionPopup()
     this->gifUnavailableCommandNotified_ = false;
     this->hideGifPickerPopup();
 
+    if (edit.isCompletionInProgress())
+    {
+        this->hideCompletionPopup();
+        return;
+    }
+
     bool showEmoteCompletion = getSettings()->emoteCompletionWithColon;
     bool showUsernameCompletion =
         tc != nullptr && getSettings()->showUsernameCompletionMenu;
@@ -1206,16 +1201,9 @@ void SplitInput::updateCompletionPopup()
         if (wordStart < text.size() &&
             (text[wordStart] == '/' || text[wordStart] == '.'))
         {
-            if (edit.isCompletionInProgress())
-            {
-                this->hideCompletionPopup();
-            }
-            else
-            {
-                this->showCompletionPopup(
-                    text.mid(wordStart, position - wordStart + 1),
-                    CompletionKind::Command);
-            }
+            this->showCompletionPopup(
+                text.mid(wordStart, position - wordStart + 1),
+                CompletionKind::Command);
             return;
         }
     }
@@ -1269,8 +1257,16 @@ void SplitInput::showCompletionPopup(const QString &text, CompletionKind kind)
             [that = QPointer(this)](const QString &text) mutable {
                 if (auto *this2 = that.data())
                 {
+                    auto completions =
+                        this2->inputCompletionPopup_->selectedCompletions(
+                            this2->ui_.textEdit->isFirstWord());
                     this2->insertCompletionText(text);
                     this2->hideCompletionPopup();
+                    if (completions)
+                    {
+                        auto [items, index] = *completions;
+                        this2->ui_.textEdit->continueCompletion(items, index);
+                    }
                 }
             });
     }

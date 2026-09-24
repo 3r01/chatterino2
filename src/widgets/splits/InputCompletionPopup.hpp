@@ -36,8 +36,8 @@ public:
 
     void setInputAction(ActionCallback callback);
 
-    std::optional<std::pair<QStringList, int>> selectedCommandCompletions()
-        const;
+    std::optional<std::pair<QStringList, int>> selectedCompletions(
+        bool isFirstWord) const;
 
     bool eventFilter(QObject *watched, QEvent *event) override;
 
