@@ -7,6 +7,7 @@
 #include "Application.hpp"
 #include "common/Env.hpp"
 #include "common/Literals.hpp"  // IWYU pragma: keep
+#include "common/Modes.hpp"
 #include "common/Version.hpp"
 #include "controllers/hotkeys/HotkeyCategory.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
@@ -966,6 +967,30 @@ void GeneralPage::initLayout(GeneralPageView &layout)
         formatRichNamedLink(FIREFOX_EXTENSION_LINK, "Download for Firefox"));
 
 #ifdef Q_OS_WIN
+    if (getApp()->getModes().isPortable)
+    {
+        layout.addDescription(
+            "Portable Chatterino does not register browser integration "
+            "automatically. Registration writes to your Windows user registry "
+            "to point your browser extension to this copy of Chatterino. "
+            "You may manually register it below.");
+        layout.addButton("Register browser integration", [this] {
+            const auto result = registerNmHost(getApp()->getPaths());
+            if (result)
+            {
+                QMessageBox::information(this, "Registration Successful",
+                                         "Browser integration registered.");
+            }
+            else
+            {
+                QMessageBox::warning(
+                    this, "Registration Failed",
+                    "Failed to register browser integration:\n" +
+                        result.error());
+            }
+        });
+    }
+
     layout.addDescription("Chatterino only attaches to known browsers to avoid "
                           "attaching to other windows by accident.");
     SettingWidget::checkbox("Attach to any browser (may cause issues)",
