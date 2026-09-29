@@ -532,6 +532,8 @@ set(SOURCE_FILES
         providers/twitch/api/TwitchIntegrity.cpp
         providers/twitch/api/TwitchIntegrity.hpp
         providers/twitch/api/TwitchIntegrityQtWebEngine.cpp
+        providers/twitch/api/TwitchWebEngineProfile.cpp
+        providers/twitch/api/TwitchWebEngineProfile.hpp
         providers/twitch/api/WhisperHistory.cpp
         providers/twitch/api/WhisperHistory.hpp
 

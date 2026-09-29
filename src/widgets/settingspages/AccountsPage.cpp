@@ -54,7 +54,8 @@ AccountsPage::AccountsPage()
 
     auto *historyGroup = new QGroupBox("Twitch sign-in", this);
     auto *historyLayout = new QVBoxLayout(historyGroup);
-#if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
+#if (defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)) || \
+    (defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE))
     auto *description = new QLabel(
         "Sign in here to set up chat, recent whisper history, and GIF search "
         "and sending for the selected account. You do not need to copy any "
@@ -81,7 +82,8 @@ AccountsPage::AccountsPage()
 
     auto *signIn = new QPushButton("Sign in with Twitch", historyGroup);
     historyLayout->addWidget(signIn);
-#if !defined(Q_OS_WIN) || !defined(CHATTERINO_3R01_BUILD)
+#if !((defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)) || \
+      (defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE)))
     signIn->hide();
 #endif
 

@@ -3,23 +3,19 @@
 // SPDX-License-Identifier: MIT
 
 #include "providers/twitch/api/TwitchIntegrity.hpp"
+#include "providers/twitch/api/TwitchWebEngineProfile.hpp"
 
 #ifdef CHATTERINO_HAS_QT_WEBENGINE
 
 #    include <QCoreApplication>
-#    include <QDir>
 #    include <QFile>
 #    include <QJsonDocument>
 #    include <QPointer>
-#    include <QRegularExpression>
-#    include <QStandardPaths>
 #    include <QTimer>
 #    include <QUuid>
 #    include <QVariant>
 #    include <QWebEnginePage>
 #    include <QWebEngineProfile>
-#    include <QWebEngineView>
-#    include <QWidget>
 
 #    include <deque>
 #    include <optional>
@@ -84,8 +80,6 @@ public:
                              this->requestTimeout_.stop();
                              this->messagePoll_.stop();
                              this->destroyBrowser();
-                             delete this->profile_;
-                             this->profile_ = nullptr;
                          });
     }
 
@@ -128,48 +122,19 @@ private:
         this->state_ = State::Starting;
         const auto generation = ++this->generation_;
 
-        this->host_ = new QWidget;
-        this->host_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
-        this->host_->resize(800, 600);
-        this->host_->move(-32000, -32000);
-
-        if (this->profile_ == nullptr)
+        auto *profile = twitchWebEngineProfile();
+        if (profile == nullptr)
         {
-            this->profile_ =
-                new QWebEngineProfile(QStringLiteral("twitch-integrity"));
-            const auto profileRoot =
-                QStandardPaths::writableLocation(
-                    QStandardPaths::CacheLocation) +
-                QStringLiteral("/twitch-integrity-webengine");
-            if (!QDir{}.mkpath(profileRoot))
-            {
-                this->failAll(QStringLiteral(
-                    "Unable to create Twitch integrity profile"));
-                return;
-            }
-            this->profile_->setCachePath(profileRoot +
-                                         QStringLiteral("/cache"));
-            this->profile_->setPersistentStoragePath(
-                profileRoot + QStringLiteral("/storage"));
-            this->profile_->setPersistentCookiesPolicy(
-                QWebEngineProfile::AllowPersistentCookies);
-            this->profile_->setHttpCacheMaximumSize(32 * 1024 * 1024);
-
-            auto userAgent = this->profile_->httpUserAgent();
-            userAgent.remove(
-                QRegularExpression{QStringLiteral(R"(QtWebEngine/[^ ]+\s*)")});
-            this->profile_->setHttpUserAgent(userAgent);
+            this->failAll(
+                QStringLiteral("Unable to create Twitch integrity profile"));
+            return;
         }
 
-        this->view_ = new QWebEngineView(this->profile_, this->host_);
-        this->view_->setGeometry(this->host_->rect());
-        this->page_ = this->view_->page();
-        this->host_->show();
-        this->view_->show();
+        this->page_ = new QWebEnginePage(profile, this);
 
         const QPointer self{this};
         QObject::connect(
-            this->view_, &QWebEngineView::loadFinished, this,
+            this->page_, &QWebEnginePage::loadFinished, this,
             [self, generation](bool succeeded) {
                 if (!self || self->generation_ != generation ||
                     self->pageInitialized_)
@@ -187,7 +152,7 @@ private:
             });
 
         this->startupTimeout_.start();
-        this->view_->load(QUrl{QString::fromLatin1(PAGE_URL)});
+        this->page_->load(QUrl{QString::fromLatin1(PAGE_URL)});
     }
 
     void initializePage(quint64 generation)
@@ -474,11 +439,8 @@ private:
 
     void destroyBrowser()
     {
-        delete this->view_;
-        this->view_ = nullptr;
+        delete this->page_;
         this->page_ = nullptr;
-        delete this->host_;
-        this->host_ = nullptr;
     }
 
     QString deviceID_{QUuid::createUuid().toString(QUuid::Id128)};
@@ -486,10 +448,7 @@ private:
     QTimer startupTimeout_;
     QTimer requestTimeout_;
     QTimer messagePoll_;
-    QWidget *host_{};
-    QWebEngineView *view_{};
     QWebEnginePage *page_{};
-    QWebEngineProfile *profile_{};
     std::deque<PendingRequest> queue_;
     std::optional<PendingRequest> current_;
     bool pageInitialized_{};

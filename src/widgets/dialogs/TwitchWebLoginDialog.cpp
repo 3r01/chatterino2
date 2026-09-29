@@ -7,6 +7,12 @@
 #include "common/network/NetworkRequest.hpp"
 #include "common/network/NetworkResult.hpp"
 
+#include <QtGlobal>
+
+#if defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE)
+#    include "providers/twitch/api/TwitchWebEngineProfile.hpp"
+#endif
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDialog>
@@ -24,6 +30,15 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#if defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE)
+#    include <QNetworkCookie>
+#    include <QWebEngineCookieStore>
+#    include <QWebEngineNavigationRequest>
+#    include <QWebEnginePage>
+#    include <QWebEngineProfile>
+#    include <QWebEngineView>
+#endif
+
 #if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
 #    include <Shlwapi.h>
 #    include <WebView2.h>
@@ -37,10 +52,12 @@
 
 namespace chatterino {
 
-#if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
+#if (defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)) || \
+    (defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE))
 
 namespace {
 
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
@@ -120,6 +137,7 @@ bool removeProfileAfterBrowserExit(
         &state->processExitedToken);
     return SUCCEEDED(result);
 }
+#    endif
 
 class TwitchWebLoginDialog final : public QDialog
 {
@@ -127,11 +145,15 @@ public:
     TwitchWebLoginDialog(QWidget *parent, TwitchWebLoginCallback onSuccess)
         : QDialog(parent)
         , onSuccess_(std::move(onSuccess))
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         , userDataDirectory_(QDir::temp().filePath(
               QStringLiteral("chatterino-twitch-login-%1")
                   .arg(QUuid::createUuid().toString(QUuid::Id128))))
+#    endif
     {
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         removeAbandonedLoginProfiles();
+#    endif
         this->setAttribute(Qt::WA_DeleteOnClose);
         this->setWindowTitle(QStringLiteral("Sign in with Twitch"));
         this->resize(900, 700);
@@ -144,10 +166,59 @@ public:
         this->status_->setWordWrap(true);
         layout->addWidget(this->status_);
 
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         this->host_ = new QWidget(this);
         this->host_->setMinimumSize(640, 480);
         this->host_->installEventFilter(this);
         layout->addWidget(this->host_, 1);
+#    else
+        auto *profile = twitchWebEngineProfile();
+        if (profile != nullptr)
+        {
+            this->view_ = new QWebEngineView(profile, this);
+            this->view_->setMinimumSize(640, 480);
+            layout->addWidget(this->view_, 1);
+
+            const auto captureChatToken = [this](const QUrl &url) {
+                if (url.scheme() != u"https" || url.host() != u"chatterino.com")
+                {
+                    return;
+                }
+                const QUrlQuery fragment{url.fragment()};
+                const auto token =
+                    fragment.queryItemValue(QStringLiteral("access_token"));
+                if (!token.isEmpty())
+                {
+                    this->validateChatToken(token);
+                }
+            };
+            QObject::connect(
+                this->view_->page(), &QWebEnginePage::navigationRequested, this,
+                [captureChatToken](QWebEngineNavigationRequest &request) {
+                    if (request.isMainFrame())
+                    {
+                        captureChatToken(request.url());
+                    }
+                });
+            QObject::connect(this->view_, &QWebEngineView::urlChanged, this,
+                             captureChatToken);
+            QObject::connect(
+                profile->cookieStore(), &QWebEngineCookieStore::cookieAdded,
+                this,
+                [this](const QNetworkCookie &cookie) {
+                    const auto domain = cookie.domain().toLower();
+                    if (cookie.name() != "auth-token" ||
+                        (domain != u"twitch.tv" &&
+                         !domain.endsWith(u".twitch.tv")))
+                    {
+                        return;
+                    }
+                    this->authCookie_ = cookie;
+                    this->validateWebToken(QString::fromUtf8(cookie.value()));
+                },
+                Qt::QueuedConnection);
+        }
+#    endif
 
         auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
         this->resetButton_ =
@@ -161,10 +232,12 @@ public:
                          &QDialog::reject);
         layout->addWidget(buttons);
 
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         this->cookiePoll_.setInterval(1000);
         QObject::connect(&this->cookiePoll_, &QTimer::timeout, this, [this] {
             this->checkForWebToken();
         });
+#    endif
 
         QTimer::singleShot(0, this, [this] {
             this->start();
@@ -173,6 +246,7 @@ public:
 
     ~TwitchWebLoginDialog() override
     {
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         this->cookiePoll_.stop();
         const auto cleanupAfterExit =
             this->environment_ && this->controller_ &&
@@ -195,8 +269,10 @@ public:
             }
         }
         this->comInitialized_ = false;
+#    endif
     }
 
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
@@ -206,10 +282,12 @@ protected:
         }
         return QDialog::eventFilter(watched, event);
     }
+#    endif
 
 private:
     void start()
     {
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         const auto result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         if (FAILED(result) && result != RPC_E_CHANGED_MODE)
         {
@@ -279,8 +357,57 @@ private:
             this->showError(QStringLiteral(
                 "Unable to launch the Microsoft WebView2 runtime."));
         }
+#    else
+        if (this->view_ == nullptr)
+        {
+            this->showError(
+                QStringLiteral("Unable to create the Twitch sign-in profile."));
+            return;
+        }
+        this->view_->load(
+            QUrl{QStringLiteral("https://chatterino.com/client_login")});
+        this->view_->page()->profile()->cookieStore()->loadAllCookies();
+        if (const auto cookie = twitchWebEngineAuthCookie())
+        {
+            this->authCookie_ = cookie;
+            this->validateWebToken(QString::fromUtf8(cookie->value()));
+        }
+
+        this->cookiePage_ =
+            new QWebEnginePage(this->view_->page()->profile(), this);
+        QObject::connect(
+            this->cookiePage_, &QWebEnginePage::loadFinished, this,
+            [this](bool succeeded) {
+                if (!succeeded ||
+                    this->cookiePage_->url().scheme() != u"https" ||
+                    this->cookiePage_->url().host() != u"www.twitch.tv")
+                {
+                    return;
+                }
+                const QPointer self{this};
+                this->cookiePage_->runJavaScript(
+                    QStringLiteral(
+                        R"JS((document.cookie.split("; ").find(c => c.startsWith("auth-token=")) || "").slice(11))JS"),
+                    [self](const QVariant &result) {
+                        if (!self || result.toString().isEmpty())
+                        {
+                            return;
+                        }
+                        QNetworkCookie cookie("auth-token",
+                                              result.toString().toUtf8());
+                        cookie.setDomain(QStringLiteral(".twitch.tv"));
+                        cookie.setPath(QStringLiteral("/"));
+                        self->authCookie_ = cookie;
+                        self->validateWebToken(
+                            QString::fromUtf8(cookie.value()));
+                    });
+            });
+        this->cookiePage_->load(
+            QUrl{QStringLiteral("https://www.twitch.tv/robots.txt")});
+#    endif
     }
 
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
     void initializeController()
     {
         this->updateBounds();
@@ -433,6 +560,7 @@ private:
                 })
                 .Get());
     }
+#    endif
 
     void validateChatToken(const QString &token)
     {
@@ -569,6 +697,14 @@ private:
                         QStringLiteral("Could not validate the Twitch web "
                                        "sign-in (%1). Retrying...")
                             .arg(result.formatError()));
+#    if defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE)
+                    QTimer::singleShot(5100, self, [self, token, generation] {
+                        if (self && self->authGeneration_ == generation)
+                        {
+                            self->validateWebToken(token);
+                        }
+                    });
+#    endif
                 }
             })
             .execute();
@@ -617,6 +753,7 @@ private:
         this->validatingWebToken_ = false;
         this->resetButton_->hide();
 
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
         ComPtr<ICoreWebView2_2> webView2;
         ComPtr<ICoreWebView2CookieManager> cookieManager;
         if (this->webView_ && SUCCEEDED(this->webView_.As(&webView2)) &&
@@ -633,10 +770,25 @@ private:
         {
             this->webView_->Navigate(L"https://chatterino.com/client_login");
         }
+#    else
+        if (this->authCookie_.has_value())
+        {
+            this->view_->page()->profile()->cookieStore()->deleteCookie(
+                *this->authCookie_);
+            this->authCookie_.reset();
+        }
+        this->status_->setText(QStringLiteral(
+            "Sign in to Twitch. Chatterino will finish setting up the account "
+            "automatically."));
+        this->view_->load(
+            QUrl{QStringLiteral("https://chatterino.com/client_login")});
+#    endif
     }
 
     TwitchWebLoginCallback onSuccess_;
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
     QString userDataDirectory_;
+#    endif
     std::optional<TwitchWebCredentials> credentials_;
     QString chatToken_;
     QString webToken_;
@@ -647,12 +799,18 @@ private:
     QDateTime nextWebValidation_;
     QLabel *status_{};
     QPushButton *resetButton_{};
+#    if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
     QWidget *host_{};
     QTimer cookiePoll_;
     ComPtr<ICoreWebView2Environment> environment_;
     ComPtr<ICoreWebView2Controller> controller_;
     ComPtr<ICoreWebView2> webView_;
     bool comInitialized_{};
+#    else
+    QWebEngineView *view_{};
+    QWebEnginePage *cookiePage_{};
+    std::optional<QNetworkCookie> authCookie_;
+#    endif
     bool validatingChatToken_{};
     bool validatingWebToken_{};
     quint64 authGeneration_{};
@@ -664,7 +822,8 @@ private:
 
 void openTwitchWebLogin(QWidget *parent, TwitchWebLoginCallback onSuccess)
 {
-#if defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)
+#if (defined(Q_OS_WIN) && defined(CHATTERINO_3R01_BUILD)) || \
+    (defined(Q_OS_LINUX) && defined(CHATTERINO_HAS_QT_WEBENGINE))
     auto *dialog = new TwitchWebLoginDialog(parent, std::move(onSuccess));
     dialog->show();
 #else
