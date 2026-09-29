@@ -318,6 +318,13 @@ jobs:
           LDAI_OUTPUT: Chatterino.3r01-x86_64.AppImage
           EXTRA_QT_MODULES: webenginewidgets
         run: |
+          # NSS loads these modules at runtime, so linuxdeploy cannot find them
+          # from the WebEngine binary's linked dependencies.
+          cp /usr/lib/x86_64-linux-gnu/libsoftokn3.so \
+            /usr/lib/x86_64-linux-gnu/libfreebl3.so \
+            /usr/lib/x86_64-linux-gnu/libfreeblpriv3.so \
+            AppDir/usr/lib/
+
           curl --fail --location --output linuxdeploy-x86_64.AppImage \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           curl --fail --location --output linuxdeploy-plugin-qt-x86_64.AppImage \
@@ -331,6 +338,9 @@ jobs:
           ./$LDAI_OUTPUT --appimage-extract >/dev/null
           test -n "$(find squashfs-root -type f -name QtWebEngineProcess -print -quit)"
           test -n "$(find squashfs-root -type f -name qtwebengine_resources.pak -print -quit)"
+          test -f squashfs-root/usr/lib/libsoftokn3.so
+          test -f squashfs-root/usr/lib/libfreebl3.so
+          test -f squashfs-root/usr/lib/libfreeblpriv3.so
 
       - name: Upload bundled Linux release
         uses: actions/upload-artifact@v7
