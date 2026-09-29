@@ -320,6 +320,7 @@ jobs:
         run: |
           # NSS loads these modules at runtime, so linuxdeploy cannot find them
           # from the WebEngine binary's linked dependencies.
+          mkdir -p AppDir/usr/lib
           cp /usr/lib/x86_64-linux-gnu/nss/libsoftokn3.so \
             /usr/lib/x86_64-linux-gnu/libfreebl3.so \
             /usr/lib/x86_64-linux-gnu/libfreeblpriv3.so \
