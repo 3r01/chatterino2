@@ -150,15 +150,22 @@ EmotePtr createUpdatedEmote(const EmotePtr &oldEmote,
                         dispatch.emoteName == oldEmote->baseName->string;
 
     auto baseName = oldEmote->baseName.value_or(oldEmote->name);
-    auto emote = std::make_shared<const Emote>(Emote(
-        {EmoteName{dispatch.emoteName}, oldEmote->images,
-         toNonAliased
-             ? createTooltip(dispatch.emoteName, oldEmote->author.string, false)
-             : createAliasedTooltip(dispatch.emoteName, baseName.string,
-                                    oldEmote->author.string, false),
-         oldEmote->homePage, oldEmote->zeroWidth, oldEmote->id,
-         oldEmote->author, makeConditionedOptional(!toNonAliased, baseName),
-         oldEmote->tags, oldEmote->isSevenTV}));
+    auto emote = std::make_shared<const Emote>(Emote({
+        .name = EmoteName{dispatch.emoteName},
+        .images = oldEmote->images,
+        .tooltip = toNonAliased ? createTooltip(dispatch.emoteName,
+                                                oldEmote->author.string, false)
+                                : createAliasedTooltip(
+                                      dispatch.emoteName, baseName.string,
+                                      oldEmote->author.string, false),
+        .homePage = oldEmote->homePage,
+        .zeroWidth = oldEmote->zeroWidth,
+        .id = oldEmote->id,
+        .author = oldEmote->author,
+        .baseName = makeConditionedOptional(!toNonAliased, baseName),
+        .tags = oldEmote->tags,
+        .isSevenTV = oldEmote->isSevenTV,
+    }));
     return emote;
 }
 
