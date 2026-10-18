@@ -32,6 +32,25 @@ TEST(SignalVector, InsertPublishesSnapshotBeforeNotification)
     EXPECT_EQ(*previous, (std::vector<int>{1, 3}));
 }
 
+TEST(SignalVector, ClearPublishesSnapshotBeforeNotification)
+{
+    SignalVector<int> vector;
+    vector.append(1);
+    vector.append(2);
+    const auto previous = vector.readOnly();
+    bool notified = false;
+
+    std::ignore = vector.itemsCleared.connect([&] {
+        notified = true;
+        EXPECT_TRUE(vector.raw().empty());
+        EXPECT_TRUE(vector.readOnly()->empty());
+    });
+
+    vector.clear();
+    EXPECT_TRUE(notified);
+    EXPECT_EQ(*previous, (std::vector<int>{1, 2}));
+}
+
 TEST(SignalVector, RemoveAtPublishesSnapshotBeforeNotification)
 {
     SignalVector<int> vector;

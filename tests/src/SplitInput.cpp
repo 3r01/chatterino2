@@ -234,6 +234,10 @@ public:
     SplitInput &input;
 };
 
+}  // namespace
+
+namespace chatterino {
+
 class PopupCycleFixture : public ::testing::Test
 {
 public:
@@ -316,7 +320,7 @@ public:
     SplitInput &input;
 };
 
-}  // namespace
+}  // namespace chatterino
 
 TEST_F(SplitInputCompletionTest, SelectReplyTarget)
 {
