@@ -13,6 +13,7 @@
 #include "controllers/completion/TabCompletionModel.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "controllers/plugins/PluginController.hpp"
+#include "messages/Emote.hpp"
 #include "messages/MessageElement.hpp"
 #include "mocks/BaseApplication.hpp"
 #include "mocks/Channel.hpp"
@@ -42,8 +43,10 @@
 #include <QApplication>
 #include <QCompleter>
 #include <QDebug>
+#include <QKeyEvent>
 #include <QString>
 
+#include <initializer_list>
 #include <tuple>
 
 using namespace chatterino;

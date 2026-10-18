@@ -16,8 +16,8 @@
 #include "util/LayoutCreator.hpp"
 #include "widgets/splits/InputCompletionItem.hpp"
 
-#include <QSet>
 #include <QKeyEvent>
+#include <QSet>
 
 namespace chatterino {
 
