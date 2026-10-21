@@ -24,7 +24,9 @@ internal static class ChatterinoExports
 
     private static nint Resolve(string name, Assembly assembly, DllImportSearchPath? search)
     {
-        var file = Path.Combine(Directory, OperatingSystem.IsWindows() ? name + ".dll" : "lib" + name + ".so");
+        var filename = OperatingSystem.IsWindows() ? name + ".dll"
+            : (name.StartsWith("lib", StringComparison.Ordinal) ? name : "lib" + name) + ".so";
+        var file = Path.Combine(Directory, filename);
         return File.Exists(file) ? NativeLibrary.Load(file) : 0;
     }
 

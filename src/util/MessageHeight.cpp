@@ -90,7 +90,13 @@ private:
             this->dependencies_.push_back(std::move(library));
         }
 #endif
-        this->library_.setFileName(directory.filePath("MessageHeightTwitch"));
+#ifdef Q_OS_WIN
+        this->library_.setFileName(
+            directory.filePath("MessageHeightTwitch.dll"));
+#else
+        this->library_.setFileName(
+            directory.filePath("MessageHeightTwitch.so"));
+#endif
         this->library_.setLoadHints(QLibrary::PreventUnloadHint);
         const auto init = reinterpret_cast<int (*)(const char *)>(
             this->library_.resolve("ChatterinoHeightInit"));

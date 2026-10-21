@@ -31,6 +31,7 @@ env:
 jobs:
   prepare:
     name: Merge upstream into a candidate
+    if: github.repository == '3r01/chatterino2'
     runs-on: ubuntu-latest
     outputs:
       base_sha: ${{ steps.prepare.outputs.base_sha }}
@@ -211,6 +212,32 @@ jobs:
           Copy-Item build\bin\crashpad\crashpad-handler.exe package\Chatterino2\crashpad
           .\.CI\deploy-crt.ps1 package\Chatterino2
 
+      - name: Cache message-height runtime
+        id: message-height
+        uses: actions/cache@v6
+        with:
+          path: package/Chatterino2/message-height
+          key: 3r01-message-height-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/message-height/**') }}
+
+      - name: Install .NET SDK
+        if: steps.message-height.outputs.cache-hit != 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build message-height runtime
+        if: steps.message-height.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+          if ($LASTEXITCODE) { throw "Couldn't install Rust" }
+          rustup default stable
+          & tools/message-height/build.ps1 -Output package/Chatterino2/message-height
+
+      - name: Verify message-height runtime
+        shell: pwsh
+        run: python tools/message-height/smoke-test.py package/Chatterino2/message-height
+
       - name: Upload verified Windows application
         uses: actions/upload-artifact@v7
         with:
@@ -251,7 +278,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-12 gcc-12 libnotify-dev libfuse2 ninja-build pkg-config
+          sudo apt-get install -y g++-12 gcc-12 libnotify-dev libfuse2 ninja-build pkg-config clang zlib1g-dev
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
@@ -312,6 +339,28 @@ jobs:
           cmake --install build
           ldd AppDir/usr/bin/chatterino | grep -F libQt6WebEngineWidgets
 
+      - name: Cache message-height runtime
+        id: message-height
+        uses: actions/cache@v6
+        with:
+          path: AppDir/usr/bin/message-height
+          key: 3r01-message-height-${{ runner.os }}-${{ runner.arch }}-ubuntu22-${{ hashFiles('tools/message-height/**') }}
+
+      - name: Install .NET SDK
+        if: steps.message-height.outputs.cache-hit != 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build message-height runtime
+        if: steps.message-height.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+          if ($LASTEXITCODE) { throw "Couldn't install Rust" }
+          rustup default stable
+          & tools/message-height/build.ps1 -Output AppDir/usr/bin/message-height
+
       - name: Bundle Linux application
         shell: bash
         env:
@@ -342,6 +391,7 @@ jobs:
           test -f squashfs-root/usr/lib/libsoftokn3.so
           test -f squashfs-root/usr/lib/libfreebl3.so
           test -f squashfs-root/usr/lib/libfreeblpriv3.so
+          python3 tools/message-height/smoke-test.py squashfs-root/usr/bin/message-height
 
       - name: Upload bundled Linux release
         uses: actions/upload-artifact@v7
