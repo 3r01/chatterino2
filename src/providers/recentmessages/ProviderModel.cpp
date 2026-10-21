@@ -37,7 +37,9 @@ bool ProviderModel::removeRows(int row, int count, const QModelIndex &parent)
 }
 
 Provider ProviderModel::getItemFromRow(std::vector<QStandardItem *> &row,
-                                       const Provider &original)
+                                       const Provider &original,
+                                       std::optional<QModelIndex> /*index*/,
+                                       std::optional<int> /*role*/)
 {
     // keep the stable ID when a built-in provider is enabled or disabled
     return {

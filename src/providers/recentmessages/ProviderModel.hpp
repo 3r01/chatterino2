@@ -22,7 +22,9 @@ public:
 
 protected:
     Provider getItemFromRow(std::vector<QStandardItem *> &row,
-                            const Provider &original) override;
+                            const Provider &original,
+                            std::optional<QModelIndex> index,
+                            std::optional<int> role) override;
     void getRowFromItem(const Provider &item,
                         std::vector<QStandardItem *> &row) override;
 
