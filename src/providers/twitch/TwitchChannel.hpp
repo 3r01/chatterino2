@@ -186,6 +186,12 @@ public:
     bool isMod() const override;
     bool isVip() const;
     bool isStaff() const;
+    struct CurrentUserMessageInfo {
+        QString displayName;
+        int badgeCount = 0;
+    };
+    std::optional<CurrentUserMessageInfo> currentUserMessageInfo() const;
+    void setCurrentUserMessageInfo(const QString &displayName, int badgeCount);
     bool isBroadcaster() const override;
     bool hasHighRateLimit() const override;
     bool canReconnect() const override;
@@ -576,6 +582,7 @@ private:
     // Badges
     UniqueAccess<std::map<QString, std::map<QString, EmotePtr>>>
         badgeSets_;  // "subscribers": { "0": ... "3": ... "6": ...
+    std::optional<CurrentUserMessageInfo> currentUserMessageInfo_;
     UniqueAccess<std::vector<CheerEmoteSet>> cheerEmoteSets_;
     UniqueAccess<std::map<QString, ChannelPointReward>> channelPointRewards_;
     boost::circular_buffer_space_optimized<QueuedRedemption>

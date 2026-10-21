@@ -42,12 +42,15 @@
 #include "widgets/splits/TwitchGifPickerPopup.hpp"
 
 #include <QCompleter>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QTimer>
+#include <QtMath>
 #include <qwindow.h>
 
 #include <algorithm>
@@ -178,6 +181,41 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
         this->hideCompletionPopup();
     });
     this->scaleChangedEvent(this->scale());
+    this->messageHeightTimer_.setSingleShot(true);
+    this->messageHeightTimer_.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&this->messageHeightTimer_, &QTimer::timeout, this,
+                     &SplitInput::updateMessageHeight);
+    QObject::connect(
+        &this->messageHeightWatcher_,
+        &QFutureWatcher<MessageHeightResult>::finished, this, [this] {
+            if (this->heightGeneration_ == this->measuredHeightGeneration_)
+            {
+                this->lastHeightResult_ = this->messageHeightWatcher_.result();
+                this->showMessageHeight(this->lastHeightResult_,
+                                        this->measuredHeightEstimated_);
+            }
+            else
+            {
+                this->lastHeightRequest_.clear();
+            }
+            if (getSettings()->showMessageHeight &&
+                !this->getInputText().isEmpty() &&
+                !this->messageHeightTimer_.isActive())
+            {
+                this->messageHeightTimer_.start(1000);
+            }
+        });
+    this->signalHolder_.managedConnect(this->split_->channelChanged, [this] {
+        this->lastHeightRequest_.clear();
+        this->ui_.messageHeight->setText({});
+        this->scheduleMessageHeight();
+    });
+    this->signalHolder_.managedConnect(
+        getApp()->getAccounts()->twitch.currentUserChanged, [this] {
+            this->lastHeightRequest_.clear();
+            this->ui_.messageHeight->setText({});
+            this->scheduleMessageHeight();
+        });
     this->signalHolder_.managedConnect(getApp()->getHotkeys()->onItemsUpdated,
                                        [this]() {
                                            this->clearShortcuts();
@@ -388,14 +426,26 @@ void SplitInput::initLayout()
         this->managedConnections_);
 
     // right box
-    auto box = hboxLayout.emplace<QVBoxLayout>().withoutMargin();
+    auto box = hboxLayout.emplace<QVBoxLayout>().withoutMargin().assign(
+        &this->ui_.inputIndicators);
     box->setSpacing(0);
     {
-        auto hbox = box.emplace<QHBoxLayout>().withoutMargin();
+        auto counters = box.emplace<QVBoxLayout>().withoutMargin();
+        counters->setSpacing(0);
+        auto hbox = counters.emplace<QHBoxLayout>().withoutMargin();
         this->ui_.textEditLength = new QLabel();
         // Right-align the labels contents
         this->ui_.textEditLength->setAlignment(Qt::AlignRight);
         hbox->addWidget(this->ui_.textEditLength);
+
+        this->ui_.messageHeight = new QLabel();
+        this->ui_.messageHeight->setAlignment(Qt::AlignRight);
+        this->ui_.messageHeight->setCursor(Qt::PointingHandCursor);
+        this->ui_.messageHeight->installEventFilter(this);
+        this->ui_.messageHeight->setObjectName("messageHeightCounter");
+        this->ui_.messageHeight->hide();
+        counters->addWidget(this->ui_.messageHeight, 0, Qt::AlignRight);
+        counters->addStretch(1);
 
         this->ui_.sendWaitStatus = new QLabel();
         this->ui_.sendWaitStatus->setAlignment(Qt::AlignRight);
@@ -409,6 +459,7 @@ void SplitInput::initLayout()
             },
             nullptr, QSize{6, 3});
         auto actions = box.emplace<QHBoxLayout>().withoutMargin();
+        actions->setAlignment(Qt::AlignBottom);
         actions->addStretch(1);
         this->ui_.gifButton = new LabelButton(QStringLiteral("GIF"));
         this->ui_.gifButton->setToolTip(QStringLiteral("Send a GIF"));
@@ -462,6 +513,18 @@ void SplitInput::initLayout()
         },
         this->managedConnections_);
 
+    // Message height counter
+    getSettings()->showMessageHeight.connect(
+        [this] {
+            this->scheduleMessageHeight();
+        },
+        this->managedConnections_);
+    getSettings()->messageHeightLimits.connect(
+        [this] {
+            this->scheduleMessageHeight();
+        },
+        this->managedConnections_);
+
     // sendWaitStatus visibility
     getSettings()->showSendWaitTimer.connect(
         [this](bool value, const auto &) {
@@ -507,6 +570,7 @@ void SplitInput::themeChangedEvent()
         QPalette palette;
         palette.setColor(QPalette::WindowText, this->theme->splits.input.text);
         this->ui_.textEditLength->setPalette(palette);
+        this->ui_.messageHeight->setPalette(palette);
         this->ui_.sendWaitStatus->setPalette(palette);
     }
 
@@ -1015,6 +1079,13 @@ void SplitInput::addShortcuts()
 
 bool SplitInput::eventFilter(QObject *obj, QEvent *event)
 {
+    if (obj == this->ui_.messageHeight &&
+        event->type() == QEvent::MouseButtonRelease &&
+        static_cast<QMouseEvent *>(event)->button() == Qt::LeftButton)
+    {
+        this->configureMessageHeight();
+        return true;
+    }
     if (event->type() == QEvent::ShortcutOverride ||
         event->type() == QEvent::Shortcut)
     {
@@ -1993,6 +2064,7 @@ void SplitInput::editTextChanged()
     }
 
     this->ui_.textEditLength->setText(labelText);
+    this->scheduleMessageHeight();
 
     bool hasReply = false;
     if (this->enableInlineReplying_)
@@ -2312,6 +2384,116 @@ void SplitInput::checkSpellingChanged()
     }
 }
 
+void SplitInput::scheduleMessageHeight()
+{
+    ++this->heightGeneration_;
+    if (!getSettings()->showMessageHeight || this->getInputText().isEmpty() ||
+        dynamic_cast<TwitchChannel *>(this->split_->getChannel().get()) ==
+            nullptr)
+    {
+        this->messageHeightTimer_.stop();
+        this->ui_.messageHeight->hide();
+        this->ui_.inputIndicators->setDirection(QBoxLayout::TopToBottom);
+        return;
+    }
+    this->ui_.inputIndicators->setDirection(QBoxLayout::LeftToRight);
+    this->ui_.messageHeight->show();
+    // Keep the previous value while typing so the counter doesn't flicker
+    if (this->lastHeightRequest_.isEmpty())
+    {
+        this->ui_.messageHeight->setText("—");
+        this->ui_.messageHeight->setStyleSheet({});
+    }
+    this->messageHeightTimer_.start(300);
+}
+
+void SplitInput::updateMessageHeight()
+{
+    if (!getSettings()->showMessageHeight || this->getInputText().isEmpty())
+    {
+        return;
+    }
+    const auto *channel =
+        dynamic_cast<TwitchChannel *>(this->split_->getChannel().get());
+    if (channel == nullptr)
+    {
+        return;
+    }
+    if (this->messageHeightWatcher_.isRunning())
+    {
+        this->messageHeightTimer_.start(300);
+        return;
+    }
+    const auto request = prepareMessageHeight(*channel, this->getInputText());
+    if (!request.error.isEmpty())
+    {
+        this->showMessageHeight({-1, request.error}, false);
+        return;
+    }
+    if (request.json == this->lastHeightRequest_)
+    {
+        this->showMessageHeight(this->lastHeightResult_, request.estimated);
+        this->messageHeightTimer_.start(1000);
+        return;
+    }
+    this->lastHeightRequest_ = request.json;
+    this->measuredHeightGeneration_ = this->heightGeneration_;
+    this->measuredHeightEstimated_ = request.estimated;
+    this->messageHeightWatcher_.setFuture(
+        QtConcurrent::run([json = request.json] {
+            return measureMessageHeight(json);
+        }));
+}
+
+void SplitInput::showMessageHeight(const MessageHeightResult &result,
+                                   bool estimated)
+{
+    const auto limit =
+        messageHeightLimit(this->split_->getChannel()->getName());
+    this->ui_.messageHeight->setStyleSheet(
+        result.pixels >= 0 && limit > 0 && result.pixels > limit ? "color: red"
+                                                                 : "");
+    if (result.pixels < 0)
+    {
+        this->ui_.messageHeight->setText("—");
+        this->ui_.messageHeight->setToolTip(
+            result.error + "\nClick to set this channel's threshold.");
+        return;
+    }
+    const auto number = QString::number(qCeil(result.pixels));
+    this->ui_.messageHeight->setText((estimated ? "~" : "") + number);
+    auto tooltip =
+        QString("Message height: %1 px (293 px chat width).\n"
+                "Click to set the threshold for #%2 (0 disables it).")
+            .arg(number)
+            .arg(this->split_->getChannel()->getName());
+    if (limit > 0)
+    {
+        tooltip += QString("\nTurns red above %1 px.").arg(limit);
+    }
+    if (estimated)
+    {
+        tooltip += "\nEstimated: badges aren't known yet or emote images are "
+                   "still loading.";
+    }
+    this->ui_.messageHeight->setToolTip(tooltip);
+}
+
+void SplitInput::configureMessageHeight()
+{
+    const auto channel = this->split_->getChannel()->getName();
+    bool accepted = false;
+    const auto limit = QInputDialog::getInt(
+        this, "Message height",
+        "Turn the counter red above this height in #" + channel +
+            ":\n(0 disables the threshold)",
+        messageHeightLimit(channel), 0, 10000, 1, &accepted);
+    if (accepted)
+    {
+        setMessageHeightLimit(channel, limit);
+    }
+}
+
 void SplitInput::updateFonts()
 {
     auto *app = getApp();
@@ -2323,6 +2505,7 @@ void SplitInput::updateFonts()
     auto tsMedium =
         app->getFonts()->getFont(FontStyle::TimestampMedium, this->scale());
     this->ui_.textEditLength->setFont(tsMedium);
+    this->ui_.messageHeight->setFont(tsMedium);
     this->ui_.sendWaitStatus->setFont(tsMedium);
     this->ui_.replyLabel->setFont(
         app->getFonts()->getFont(FontStyle::ChatMediumBold, this->scale()));

@@ -6,9 +6,11 @@
 
 #include "messages/Message.hpp"
 #include "providers/twitch/api/TwitchGifs.hpp"
+#include "util/MessageHeight.hpp"
 #include "widgets/BaseWidget.hpp"
 
 #include <QDateTime>
+#include <QFutureWatcher>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -17,6 +19,7 @@
 #include <QPointer>
 #include <QPropertyAnimation>
 #include <QTextEdit>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -187,8 +190,10 @@ protected:
         // input widgets
         QWidget *inputWrapper;
         QHBoxLayout *inputHbox;
+        QVBoxLayout *inputIndicators;
         ResizingTextEdit *textEdit;
         QLabel *textEditLength;
+        QLabel *messageHeight = nullptr;
         LabelButton *sendButton;
         QLabel *sendWaitStatus;
         LabelButton *gifButton;
@@ -217,6 +222,18 @@ protected:
     bool gifUnavailableCommandNotified_{};
     bool restoringHistory_{};
     bool historyEntryRestored_{};
+
+    void scheduleMessageHeight();
+    void updateMessageHeight();
+    void showMessageHeight(const MessageHeightResult &result, bool estimated);
+    void configureMessageHeight();
+    QTimer messageHeightTimer_;
+    QFutureWatcher<MessageHeightResult> messageHeightWatcher_;
+    QByteArray lastHeightRequest_;
+    MessageHeightResult lastHeightResult_;
+    quint64 heightGeneration_{};
+    quint64 measuredHeightGeneration_{};
+    bool measuredHeightEstimated_{};
 
     // Hidden denotes whether this split input should be hidden or not
     // This is used instead of the regular QWidget::hide/show because

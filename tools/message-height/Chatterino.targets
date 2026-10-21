@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)ChatterinoExports.cs" />
+    <LinkerArg Include="-Wl,-rpath,'$ORIGIN'" Condition="'$(OS)' != 'Windows_NT'" />
+  </ItemGroup>
+</Project>

@@ -207,6 +207,9 @@ public:
     BoolSetting showEmptyInput = {"/appearance/showEmptyInputBox", true};
     BoolSetting showMessageLength = {"/appearance/messages/showMessageLength",
                                      false};
+    BoolSetting showMessageHeight = {"/appearance/messages/showMessageHeight",
+                                     false};
+    QStringSetting messageHeightLimits = {"/messageHeight/channelLimits", "{}"};
     BoolSetting showSendWaitTimer = {"/appearance/messages/showSendWaitTimer",
                                      false};
     EnumSetting<MessageOverflow> messageOverflow = {

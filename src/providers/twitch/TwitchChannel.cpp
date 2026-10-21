@@ -143,6 +143,7 @@ TwitchChannel::TwitchChannel(const QString &name)
 
     this->signalHolder_.managedConnect(
         getApp()->getAccounts()->twitch.currentUserChanged, [this] {
+            this->currentUserMessageInfo_.reset();
             this->setMod(false);
             this->setVIP(false);
             this->setStaff(false);
@@ -980,6 +981,22 @@ bool TwitchChannel::isVip() const
 bool TwitchChannel::isStaff() const
 {
     return this->staff_;
+}
+
+std::optional<TwitchChannel::CurrentUserMessageInfo>
+    TwitchChannel::currentUserMessageInfo() const
+{
+    return this->currentUserMessageInfo_;
+}
+
+void TwitchChannel::setCurrentUserMessageInfo(const QString &displayName,
+                                              int badgeCount)
+{
+    const auto previousName = this->currentUserMessageInfo_
+                                  ? this->currentUserMessageInfo_->displayName
+                                  : QString{};
+    this->currentUserMessageInfo_ = CurrentUserMessageInfo{
+        displayName.isEmpty() ? previousName : displayName, badgeCount};
 }
 
 void TwitchChannel::setMod(bool value)

@@ -391,6 +391,14 @@ void GeneralPage::initLayout(GeneralPageView &layout)
             "limit, or a lower limit enforced by a moderation bot")
         ->addTo(layout);
 
+    SettingWidget::checkbox("Show Twitch message height while typing",
+                            s.showMessageHeight)
+        ->setTooltip(
+            "Show message height using MessageHeightTwitch, not this split's "
+            "width. Click the counter to set a threshold for the channel. "
+            "The counter turns red above it. Requires MessageHeightTwitch.")
+        ->addTo(layout);
+
     SettingWidget::checkbox("Show countdown on slow mode or when timed out",
                             s.showSendWaitTimer)
         ->setTooltip("Show how long you may need to wait before being able to "
