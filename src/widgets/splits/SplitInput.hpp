@@ -190,6 +190,7 @@ protected:
         // input widgets
         QWidget *inputWrapper;
         QHBoxLayout *inputHbox;
+        QWidget *inputIndicatorsWrapper;
         QVBoxLayout *inputIndicators;
         ResizingTextEdit *textEdit;
         QLabel *textEditLength;
@@ -227,6 +228,9 @@ protected:
     void updateMessageHeight();
     void showMessageHeight(const MessageHeightResult &result, bool estimated);
     void configureMessageHeight();
+    void updateInputHighlights();
+    QString inputTextForHighlights_;
+    int heightOverflowStart_ = -1;
     QTimer messageHeightTimer_;
     QFutureWatcher<MessageHeightResult> messageHeightWatcher_;
     QByteArray lastHeightRequest_;

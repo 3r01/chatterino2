@@ -206,12 +206,16 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
             }
         });
     this->signalHolder_.managedConnect(this->split_->channelChanged, [this] {
+        this->heightOverflowStart_ = -1;
+        this->updateInputHighlights();
         this->lastHeightRequest_.clear();
         this->ui_.messageHeight->setText({});
         this->scheduleMessageHeight();
     });
     this->signalHolder_.managedConnect(
         getApp()->getAccounts()->twitch.currentUserChanged, [this] {
+            this->heightOverflowStart_ = -1;
+            this->updateInputHighlights();
             this->lastHeightRequest_.clear();
             this->ui_.messageHeight->setText({});
             this->scheduleMessageHeight();
@@ -426,7 +430,9 @@ void SplitInput::initLayout()
         this->managedConnections_);
 
     // right box
-    auto box = hboxLayout.emplace<QVBoxLayout>().withoutMargin().assign(
+    auto indicators =
+        hboxLayout.emplace<QWidget>().assign(&this->ui_.inputIndicatorsWrapper);
+    auto box = indicators.setLayoutType<QVBoxLayout>().withoutMargin().assign(
         &this->ui_.inputIndicators);
     box->setSpacing(0);
     {
@@ -1975,74 +1981,8 @@ void SplitInput::editTextChanged()
 
     const auto textLength = codepointLength(text);
 
-    QList<QTextEdit::ExtraSelection> selections;
-    if (this->enableInlineReplying_ && this->replyTarget_ != nullptr)
-    {
-        const auto prefix = "@" + this->replyTarget_->displayName;
-        const auto input = this->ui_.textEdit->toPlainText();
-        if (input == prefix || input.startsWith(prefix + ' '))
-        {
-            QTextCursor cursor(this->ui_.textEdit->document());
-            cursor.setPosition(
-                static_cast<int>(qMin(input.size(), prefix.size() + 1)),
-                QTextCursor::KeepAnchor);
-            QTextCharFormat format;
-            format.setForeground(
-                this->theme->messages.textColors.chatPlaceholder);
-            selections.append({.cursor = cursor, .format = format});
-        }
-    }
-    if (textLength > 0 &&
-        getSettings()->messageOverflow.getValue() == MessageOverflow::Highlight)
-    {
-        QTextCursor cursor = this->ui_.textEdit->textCursor();
-        QTextCharFormat format;
-
-        const auto limitPosition = static_cast<int>(
-            textLength > TWITCH_MESSAGE_LIMIT
-                ? codepointSlice(text, 0, TWITCH_MESSAGE_LIMIT).size()
-                : text.length());
-
-        cursor.setPosition(limitPosition, QTextCursor::MoveAnchor);
-        cursor.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
-        selections.append({cursor, format});
-
-        if (textLength > TWITCH_MESSAGE_LIMIT)
-        {
-            cursor.setPosition(limitPosition, QTextCursor::MoveAnchor);
-            cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
-            format.setForeground(Qt::red);
-            selections.append({cursor, format});
-        }
-    }
-
-    if (!text.isEmpty() && this->inHistorySearch &&
-        !this->historySearchFailed && !this->historySearchQuery.isEmpty())
-    {
-        auto matchIdx =
-            text.indexOf(this->historySearchQuery, 0, Qt::CaseInsensitive);
-        if (matchIdx >= 0)
-        {
-            QTextCursor cursor = this->ui_.textEdit->textCursor();
-            QTextCharFormat format;
-            format.setBackground(
-                getTheme()->splits.input.searchHighlightBackground);
-            format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
-
-            cursor.setPosition(static_cast<int>(matchIdx),
-                               QTextCursor::MoveAnchor);
-            cursor.setPosition(
-                static_cast<int>(matchIdx + this->historySearchQuery.size()),
-                QTextCursor::KeepAnchor);
-            selections.append({.cursor = cursor, .format = format});
-        }
-    }
-
-    // block reemit of QTextEdit::textChanged()
-    {
-        const QSignalBlocker b(this->ui_.textEdit);
-        this->ui_.textEdit->setExtraSelections(selections);
-    }
+    this->inputTextForHighlights_ = text;
+    this->updateInputHighlights();
 
     QString labelText;
 
@@ -2092,6 +2032,89 @@ void SplitInput::editTextChanged()
     this->ui_.replyWrapper->setVisible(hasReply);
     this->ui_.replyLabel->setVisible(hasReply);
     this->ui_.cancelReplyButton->setVisible(hasReply);
+}
+
+void SplitInput::updateInputHighlights()
+{
+    const auto &text = this->inputTextForHighlights_;
+    const auto textLength = codepointLength(text);
+    QList<QTextEdit::ExtraSelection> selections;
+    if (this->enableInlineReplying_ && this->replyTarget_ != nullptr)
+    {
+        const auto prefix = "@" + this->replyTarget_->displayName;
+        const auto input = this->ui_.textEdit->toPlainText();
+        if (input == prefix || input.startsWith(prefix + ' '))
+        {
+            QTextCursor cursor(this->ui_.textEdit->document());
+            cursor.setPosition(
+                static_cast<int>(qMin(input.size(), prefix.size() + 1)),
+                QTextCursor::KeepAnchor);
+            QTextCharFormat format;
+            format.setForeground(
+                this->theme->messages.textColors.chatPlaceholder);
+            selections.append({.cursor = cursor, .format = format});
+        }
+    }
+    if (textLength > 0 &&
+        getSettings()->messageOverflow.getValue() == MessageOverflow::Highlight)
+    {
+        QTextCursor cursor = this->ui_.textEdit->textCursor();
+        QTextCharFormat format;
+        const auto limitPosition = static_cast<int>(
+            textLength > TWITCH_MESSAGE_LIMIT
+                ? codepointSlice(text, 0, TWITCH_MESSAGE_LIMIT).size()
+                : text.length());
+        cursor.setPosition(limitPosition, QTextCursor::MoveAnchor);
+        cursor.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
+        selections.append({cursor, format});
+        if (textLength > TWITCH_MESSAGE_LIMIT)
+        {
+            cursor.setPosition(limitPosition, QTextCursor::MoveAnchor);
+            cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+            format.setForeground(Qt::red);
+            selections.append({cursor, format});
+        }
+    }
+    if (this->heightOverflowStart_ >= 0)
+    {
+        QTextCursor cursor(this->ui_.textEdit->document());
+        auto end = cursor.document()->characterCount() - 1;
+        if (textLength > TWITCH_MESSAGE_LIMIT &&
+            getSettings()->messageOverflow.getValue() ==
+                MessageOverflow::Highlight)
+        {
+            end = std::min(
+                end, static_cast<int>(
+                         codepointSlice(text, 0, TWITCH_MESSAGE_LIMIT).size()));
+        }
+        cursor.setPosition(std::min(this->heightOverflowStart_, end));
+        cursor.setPosition(end, QTextCursor::KeepAnchor);
+        QTextCharFormat format;
+        format.setForeground(QColor("orange"));
+        selections.append({.cursor = cursor, .format = format});
+    }
+    if (!text.isEmpty() && this->inHistorySearch &&
+        !this->historySearchFailed && !this->historySearchQuery.isEmpty())
+    {
+        auto matchIdx =
+            text.indexOf(this->historySearchQuery, 0, Qt::CaseInsensitive);
+        if (matchIdx >= 0)
+        {
+            QTextCursor cursor = this->ui_.textEdit->textCursor();
+            QTextCharFormat format;
+            format.setBackground(
+                getTheme()->splits.input.searchHighlightBackground);
+            format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
+            cursor.setPosition(static_cast<int>(matchIdx),
+                               QTextCursor::MoveAnchor);
+            cursor.setPosition(
+                static_cast<int>(matchIdx + this->historySearchQuery.size()),
+                QTextCursor::KeepAnchor);
+            selections.append({.cursor = cursor, .format = format});
+        }
+    }
+    const QSignalBlocker blocker(this->ui_.textEdit);
+    this->ui_.textEdit->setExtraSelections(selections);
 }
 
 void SplitInput::paintEvent(QPaintEvent * /*event*/)
@@ -2387,18 +2410,22 @@ void SplitInput::checkSpellingChanged()
 void SplitInput::scheduleMessageHeight()
 {
     ++this->heightGeneration_;
-    if (!getSettings()->showMessageHeight || this->getInputText().isEmpty() ||
-        dynamic_cast<TwitchChannel *>(this->split_->getChannel().get()) ==
-            nullptr)
+    const bool available = getSettings()->showMessageHeight &&
+                           dynamic_cast<TwitchChannel *>(
+                               this->split_->getChannel().get()) != nullptr;
+    this->ui_.inputIndicators->setDirection(
+        available ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
+    this->ui_.messageHeight->setVisible(available);
+    if (!available || this->getInputText().isEmpty())
     {
+        this->heightOverflowStart_ = -1;
+        this->updateInputHighlights();
         this->messageHeightTimer_.stop();
-        this->ui_.messageHeight->hide();
-        this->ui_.inputIndicators->setDirection(QBoxLayout::TopToBottom);
+        this->ui_.messageHeight->clear();
+        this->ui_.messageHeight->setStyleSheet({});
         return;
     }
-    this->ui_.inputIndicators->setDirection(QBoxLayout::LeftToRight);
-    this->ui_.messageHeight->show();
-    // Keep the previous value while typing so the counter doesn't flicker
+    // Keep the previous value and overflow text while calculating
     if (this->lastHeightRequest_.isEmpty())
     {
         this->ui_.messageHeight->setText("—");
@@ -2450,9 +2477,15 @@ void SplitInput::showMessageHeight(const MessageHeightResult &result,
 {
     const auto limit =
         messageHeightLimit(this->split_->getChannel()->getName());
-    this->ui_.messageHeight->setStyleSheet(
-        result.pixels >= 0 && limit > 0 && result.pixels > limit ? "color: red"
-                                                                 : "");
+    const bool overflowing =
+        limit > 0 && result.pixels > static_cast<float>(limit);
+    const auto overflowStart = overflowing ? result.overflowStart : -1;
+    if (this->heightOverflowStart_ != overflowStart)
+    {
+        this->heightOverflowStart_ = overflowStart;
+        this->updateInputHighlights();
+    }
+    this->ui_.messageHeight->setStyleSheet(overflowing ? "color: orange" : "");
     if (result.pixels < 0)
     {
         this->ui_.messageHeight->setText("—");
@@ -2469,7 +2502,7 @@ void SplitInput::showMessageHeight(const MessageHeightResult &result,
             .arg(this->split_->getChannel()->getName());
     if (limit > 0)
     {
-        tooltip += QString("\nTurns red above %1 px.").arg(limit);
+        tooltip += QString("\nTurns orange above %1 px.").arg(limit);
     }
     if (estimated)
     {
@@ -2485,7 +2518,7 @@ void SplitInput::configureMessageHeight()
     bool accepted = false;
     const auto limit = QInputDialog::getInt(
         this, "Message height",
-        "Turn the counter red above this height in #" + channel +
+        "Turn the counter orange above this height in #" + channel +
             ":\n(0 disables the threshold)",
         messageHeightLimit(channel), 0, 10000, 1, &accepted);
     if (accepted)
@@ -2507,6 +2540,13 @@ void SplitInput::updateFonts()
     this->ui_.textEditLength->setFont(tsMedium);
     this->ui_.messageHeight->setFont(tsMedium);
     this->ui_.sendWaitStatus->setFont(tsMedium);
+    const auto counterHeight = QFontMetrics(tsMedium).height();
+    this->ui_.textEditLength->setFixedHeight(counterHeight);
+    this->ui_.messageHeight->setFixedHeight(counterHeight);
+    this->ui_.sendWaitStatus->setFixedHeight(counterHeight);
+    // Keep the same minimum height as the character counter above the emote button
+    this->ui_.inputIndicatorsWrapper->setMinimumHeight(
+        counterHeight + this->ui_.emoteButton->height());
     this->ui_.replyLabel->setFont(
         app->getFonts()->getFont(FontStyle::ChatMediumBold, this->scale()));
 

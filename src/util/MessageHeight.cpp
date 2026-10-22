@@ -26,6 +26,7 @@
 #include <QLibrary>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QTextBoundaryFinder>
 
 #include <cmath>
 #include <memory>
@@ -57,7 +58,43 @@ public:
         {
             return {-1, "Couldn't measure this message."};
         }
-        return {height, {}};
+        MessageHeightResult result{.pixels = height};
+        auto json = QJsonDocument::fromJson(request).object();
+        const auto limit =
+            static_cast<float>(json.value("heightLimit").toInt());
+        if (limit <= 0 || height <= limit)
+        {
+            return result;
+        }
+        const auto text = json.value("text").toString();
+        const auto offsets = json.take("sourceOffsets").toArray();
+        if (offsets.size() != text.size() + 1)
+        {
+            return result;
+        }
+        result.overflowStart = offsets.first().toInt();
+        QTextBoundaryFinder boundaries(QTextBoundaryFinder::Grapheme, text);
+        boundaries.toEnd();
+        // Completing an emote can reduce the height, so check from the end
+        for (auto end = boundaries.toPreviousBoundary(); end >= 0;
+             end = boundaries.toPreviousBoundary())
+        {
+            json.insert("text", text.left(end));
+            const auto prefix =
+                QJsonDocument(json).toJson(QJsonDocument::Compact);
+            const auto prefixHeight = this->measure_(prefix.constData());
+            if (!std::isfinite(prefixHeight) || prefixHeight < 0)
+            {
+                result.overflowStart = -1;
+                break;
+            }
+            if (prefixHeight <= limit)
+            {
+                result.overflowStart = offsets[end].toInt();
+                break;
+            }
+        }
+        return result;
     }
 
 private:
@@ -180,10 +217,12 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
         return request;
     }
     bool action = false;
+    int inputOffset = 0;
     if (text.startsWith("/me ") || text.startsWith(".me "))
     {
         text.remove(0, 4);
         action = true;
+        inputOffset = 4;
     }
     else if (text.startsWith('/') || text.startsWith('.'))
     {
@@ -191,7 +230,9 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
         return request;
     }
     text.replace('\n', ' ');
-    text = getApp()->getEmotes()->getEmojis()->replaceShortCodes(text);
+    std::vector<qsizetype> sourceOffsets;
+    text = getApp()->getEmotes()->getEmojis()->replaceShortCodes(
+        text, &sourceOffsets);
     if (text.toUcs4().size() > 500)
     {
         request.error = "Can't measure messages over 500 characters.";
@@ -218,12 +259,19 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
     const auto login = account->getUserName();
     const auto displayName =
         info && !info->displayName.isEmpty() ? info->displayName : login;
+    QJsonArray offsets;
+    for (const auto offset : sourceOffsets)
+    {
+        offsets.append(static_cast<int>(offset) + inputOffset);
+    }
     QJsonObject json{{"text", text},
                      {"login", login},
                      {"displayName", displayName},
                      {"badges", info ? info->badgeCount : 0},
                      {"action", action},
-                     {"providers", providers}};
+                     {"providers", providers},
+                     {"heightLimit", messageHeightLimit(channel.getName())},
+                     {"sourceOffsets", offsets}};
     request.json = QJsonDocument(json).toJson(QJsonDocument::Compact);
     return request;
 }

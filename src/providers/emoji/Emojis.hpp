@@ -58,7 +58,9 @@ public:
         QStringView text) const = 0;
     virtual const std::vector<EmojiPtr> &getEmojis() const = 0;
     virtual const std::vector<QString> &getShortCodes() const = 0;
-    virtual QString replaceShortCodes(const QString &text) const = 0;
+    virtual QString replaceShortCodes(
+        const QString &text,
+        std::vector<qsizetype> *sourceOffsets = nullptr) const = 0;
 };
 
 class Emojis : public IEmojis
@@ -69,7 +71,9 @@ public:
         QStringView text) const override;
 
     std::vector<QString> shortCodes;
-    QString replaceShortCodes(const QString &text) const override;
+    QString replaceShortCodes(
+        const QString &text,
+        std::vector<qsizetype> *sourceOffsets = nullptr) const override;
 
     const std::vector<EmojiPtr> &getEmojis() const override;
     const std::vector<QString> &getShortCodes() const override;

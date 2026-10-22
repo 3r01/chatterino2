@@ -20,6 +20,7 @@ struct MessageHeightRequest {
 struct MessageHeightResult {
     float pixels = -1;
     QString error;
+    int overflowStart = -1;
 };
 
 // Read channel and account data on the GUI thread, then measure on a worker thread

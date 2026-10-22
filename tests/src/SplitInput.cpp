@@ -43,6 +43,10 @@
 #include <QApplication>
 #include <QCompleter>
 #include <QDebug>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QString>
 
@@ -135,6 +139,7 @@ class TestSplitInput : public SplitInput
 {
 public:
     using SplitInput::insertCompletionText;
+    using SplitInput::showMessageHeight;
     using SplitInput::SplitInput;
 
     void undoInput()
@@ -884,6 +889,135 @@ TEST(SplitInput, ReplyBodyUsernameCompletion)
         QApplication::sendEvent(edit, &tab);
         EXPECT_EQ(input.getInputText(), "@forsen test @pajlada ");
     }
+}
+
+TEST(SplitInput, HeightOverflowFormatting)
+{
+    MockApplication app;
+    app.settings.showMessageHeight = true;
+    Split split(nullptr);
+    split.setChannel(
+        IndirectChannel{std::make_shared<TwitchChannel>("forsen")});
+    TestSplitInput input(&split);
+    setMessageHeightLimit("forsen", 50);
+    input.setInputText("hello world");
+    auto *edit = input.findChild<QTextEdit *>();
+    ASSERT_NE(edit, nullptr);
+
+    input.showMessageHeight({.pixels = 74, .overflowStart = 6}, false);
+    const auto selections = edit->extraSelections();
+    ASSERT_FALSE(selections.isEmpty());
+    EXPECT_EQ(selections.last().cursor.selectedText(), "world");
+    EXPECT_EQ(selections.last().format.foreground().color(), QColor("orange"));
+
+    // Keep the orange text while the next height is being calculated
+    edit->moveCursor(QTextCursor::End);
+    edit->insertPlainText("!");
+    const auto selectionsWhileTyping = edit->extraSelections();
+    ASSERT_FALSE(selectionsWhileTyping.isEmpty());
+    EXPECT_EQ(selectionsWhileTyping.last().cursor.selectedText(), "world!");
+    EXPECT_EQ(selectionsWhileTyping.last().format.foreground().color(),
+              QColor("orange"));
+
+    // Going back under the height limit clears the orange text
+    input.showMessageHeight({.pixels = 30}, false);
+    const auto selectionsUnderLimit = edit->extraSelections();
+    for (const auto &selection : selectionsUnderLimit)
+    {
+        EXPECT_NE(selection.format.foreground().color(), QColor("orange"));
+    }
+
+    input.showMessageHeight({.pixels = 74, .overflowStart = 6}, false);
+    input.setInputText("hi");
+    EXPECT_EQ(edit->extraSelections().constLast().cursor.selectedText(), "");
+    input.setInputText("");
+    EXPECT_TRUE(edit->extraSelections().isEmpty());
+
+    // The character limit stays red even when the height limit is exceeded
+    app.settings.messageOverflow = MessageOverflow::Highlight;
+    input.setInputText(QString(502, 'a'));
+    input.showMessageHeight({.pixels = 74, .overflowStart = 6}, false);
+    const auto selectionsOverBothLimits = edit->extraSelections();
+    bool foundCharacterOverflow = false;
+    bool foundHeightOverflow = false;
+    for (const auto &selection : selectionsOverBothLimits)
+    {
+        const auto color = selection.format.foreground().color();
+        if (color == QColor(Qt::red))
+        {
+            foundCharacterOverflow = true;
+            EXPECT_EQ(selection.cursor.selectionStart(), 500);
+            EXPECT_EQ(selection.cursor.selectionEnd(), 502);
+        }
+        if (color == QColor("orange"))
+        {
+            foundHeightOverflow = true;
+            EXPECT_EQ(selection.cursor.selectionStart(), 6);
+            EXPECT_EQ(selection.cursor.selectionEnd(), 500);
+        }
+    }
+    EXPECT_TRUE(foundCharacterOverflow);
+    EXPECT_TRUE(foundHeightOverflow);
+}
+
+TEST(SplitInput, HeightCounterPreservesInputGeometry)
+{
+    MockApplication app;
+    app.settings.showMessageLength = true;
+    app.settings.showEmptyInput = true;
+    const auto geometry = [&](bool enabled, const QString &text) {
+        app.settings.showMessageHeight = enabled;
+        Split split(nullptr);
+        split.setChannel(
+            IndirectChannel{std::make_shared<TwitchChannel>("forsen")});
+        auto &input = split.getInput();
+        input.setInputText(text);
+        split.resize(400, 600);
+        split.show();
+        QApplication::processEvents();
+        QApplication::processEvents();
+        const auto *edit = input.findChild<QTextEdit *>();
+        return std::pair{input.height(), edit->mapTo(&input, QPoint{}).y()};
+    };
+    for (const auto &text : {"", "a", "a\na\na"})
+    {
+        SCOPED_TRACE(text);
+        EXPECT_EQ(geometry(false, text), geometry(true, text));
+    }
+}
+
+TEST(SplitInput, HeightOverflowBoundary)
+{
+    if (!QFileInfo::exists(QCoreApplication::applicationDirPath() +
+                           "/message-height/upstream-revision"))
+    {
+        GTEST_SKIP() << "MessageHeightTwitch isn't installed";
+    }
+    const auto text = QString("test ").repeated(80);
+    QJsonArray offsets;
+    for (int index = 0; index <= text.size(); ++index)
+    {
+        offsets.append(index);
+    }
+    QJsonObject request{{"text", text},
+                        {"login", "iore"},
+                        {"displayName", "Iore"},
+                        {"badges", 2},
+                        {"providers", QJsonObject{}},
+                        {"heightLimit", 50},
+                        {"sourceOffsets", offsets}};
+    const auto result = measureMessageHeight(QJsonDocument(request).toJson());
+    ASSERT_TRUE(result.error.isEmpty()) << result.error.toStdString();
+    ASSERT_GT(result.pixels, 50);
+    ASSERT_GE(result.overflowStart, 0);
+    ASSERT_LT(result.overflowStart, text.size());
+
+    // Removing the overflowing part brings the message under the limit
+    request.insert("heightLimit", 0);
+    request.insert("text", text.left(result.overflowStart));
+    EXPECT_LE(measureMessageHeight(QJsonDocument(request).toJson()).pixels, 50);
+    request.insert("text", text.left(result.overflowStart + 1));
+    EXPECT_GT(measureMessageHeight(QJsonDocument(request).toJson()).pixels, 50);
 }
 
 TEST(SplitInput, ReplyPrefixFormatting)

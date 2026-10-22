@@ -61,6 +61,18 @@ TEST(Emojis, ShortcodeParsing)
     }
 }
 
+TEST(Emojis, ShortcodeSourceOffsets)
+{
+    Emojis emojis;
+    emojis.load();
+    std::vector<qsizetype> offsets;
+    EXPECT_EQ(emojis.replaceShortCodes(u"a :penguin: b"_s, &offsets),
+              u"a 🐧 b"_s);
+    EXPECT_EQ(offsets, (std::vector<qsizetype>{0, 1, 2, 2, 11, 12, 13}));
+    EXPECT_EQ(emojis.replaceShortCodes(u"a 🙂 b"_s, &offsets), u"a 🙂 b"_s);
+    EXPECT_EQ(offsets, (std::vector<qsizetype>{0, 1, 2, 3, 4, 5, 6}));
+}
+
 TEST(Emojis, Parse)
 {
     Emojis emojis;

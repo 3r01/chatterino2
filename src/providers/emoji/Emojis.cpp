@@ -19,6 +19,7 @@
 
 #include <map>
 #include <memory>
+#include <numeric>
 
 namespace {
 
@@ -417,9 +418,17 @@ std::vector<std::variant<EmotePtr, QStringView>> Emojis::parse(
     return result;
 }
 
-QString Emojis::replaceShortCodes(const QString &text) const
+QString Emojis::replaceShortCodes(const QString &text,
+                                  std::vector<qsizetype> *sourceOffsets) const
 {
     QString ret(text);
+    if (sourceOffsets != nullptr)
+    {
+        sourceOffsets->resize(text.size() + 1);
+        // GCC 12 doesn't have std::ranges::iota
+        // NOLINTNEXTLINE(modernize-use-ranges)
+        std::iota(sourceOffsets->begin(), sourceOffsets->end(), qsizetype{0});
+    }
     auto it = this->findShortCodesRegex_.globalMatch(text);
 
     qsizetype offset = 0;
@@ -441,6 +450,18 @@ QString Emojis::replaceShortCodes(const QString &text) const
         }
 
         const auto &emojiData = emojiIt.value();
+
+        // Keep the original positions for input highlighting
+        if (sourceOffsets != nullptr)
+        {
+            const auto start = offset + match.capturedStart();
+            const auto end = start + match.capturedLength();
+            const auto sourceStart = (*sourceOffsets)[start];
+            sourceOffsets->erase(sourceOffsets->begin() + start + 1,
+                                 sourceOffsets->begin() + end);
+            sourceOffsets->insert(sourceOffsets->begin() + start + 1,
+                                  emojiData->value.size() - 1, sourceStart);
+        }
 
         ret.replace(offset + match.capturedStart(), match.capturedLength(),
                     emojiData->value);
