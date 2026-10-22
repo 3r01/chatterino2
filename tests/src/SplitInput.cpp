@@ -971,7 +971,7 @@ TEST(SplitInput, HeightCounterUsesCalculatedHeight)
     TestSplitInput input(&split);
     input.setInputText("hello");
     input.showMessageHeight({.pixels = 52.1875F}, false);
-    QLabel *counter = nullptr;
+    const QLabel *counter = nullptr;
     const auto labels = input.findChildren<QLabel *>();
     for (auto *label : labels)
     {
@@ -1024,6 +1024,31 @@ TEST(SplitInput, HeightCounterPreservesInputGeometry)
     {
         SCOPED_TRACE(text);
         EXPECT_EQ(geometry(false, text), geometry(true, text));
+    }
+}
+
+TEST(SplitInput, HeightCounterDoesNotTakeSpareWidth)
+{
+    MockApplication app;
+    app.settings.showMessageHeight = true;
+    app.settings.showMessageLength = true;
+    app.settings.showEmptyInput = true;
+    Split split(nullptr);
+    split.setChannel(
+        IndirectChannel{std::make_shared<TwitchChannel>("forsen")});
+    auto &input = split.getInput();
+    input.setInputText("how long is he going to play this shit forsenY");
+    split.show();
+    const auto *edit = input.findChild<QTextEdit *>();
+    ASSERT_NE(edit, nullptr);
+    for (const auto width : {400, 800})
+    {
+        split.resize(width, 600);
+        QApplication::processEvents();
+        QApplication::processEvents();
+
+        // Spare width belongs to the input, not the counters and buttons
+        EXPECT_GT(edit->width(), input.width() - 100);
     }
 }
 

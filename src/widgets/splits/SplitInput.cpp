@@ -432,6 +432,7 @@ void SplitInput::initLayout()
     // right box
     auto indicators =
         hboxLayout.emplace<QWidget>().assign(&this->ui_.inputIndicatorsWrapper);
+    indicators->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
     auto box = indicators.setLayoutType<QVBoxLayout>().withoutMargin().assign(
         &this->ui_.inputIndicators);
     box->setSpacing(0);
