@@ -48,6 +48,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QString>
 
 #include <initializer_list>
@@ -958,6 +959,46 @@ TEST(SplitInput, HeightOverflowFormatting)
     }
     EXPECT_TRUE(foundCharacterOverflow);
     EXPECT_TRUE(foundHeightOverflow);
+}
+
+TEST(SplitInput, HeightCounterUsesCalculatedHeight)
+{
+    MockApplication app;
+    app.settings.showMessageHeight = true;
+    Split split(nullptr);
+    split.setChannel(
+        IndirectChannel{std::make_shared<TwitchChannel>("forsen")});
+    TestSplitInput input(&split);
+    input.setInputText("hello");
+    input.showMessageHeight({.pixels = 52.1875F}, false);
+    QLabel *counter = nullptr;
+    const auto labels = input.findChildren<QLabel *>();
+    for (auto *label : labels)
+    {
+        if (label->toolTip().startsWith("Message height:"))
+        {
+            counter = label;
+            break;
+        }
+    }
+    ASSERT_NE(counter, nullptr);
+
+    // A taller single line still stays blank below two normal text lines
+    input.showMessageHeight({.pixels = 42}, false);
+    EXPECT_TRUE(counter->text().isEmpty());
+    input.showMessageHeight({.pixels = 52}, false);
+    EXPECT_TRUE(counter->text().isEmpty());
+    input.showMessageHeight({.pixels = 52.1875F}, false);
+
+    // Show the counter even if the input fits on one line
+    EXPECT_EQ(counter->text(), "53");
+
+    // Input line breaks don't decide whether the counter is shown
+    input.setInputText("hello\nworld");
+    input.showMessageHeight({.pixels = 30.1875F}, false);
+    EXPECT_TRUE(counter->text().isEmpty());
+    input.showMessageHeight({.pixels = 52.1875F}, true);
+    EXPECT_EQ(counter->text(), "~53");
 }
 
 TEST(SplitInput, HeightCounterPreservesInputGeometry)

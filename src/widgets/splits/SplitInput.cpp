@@ -2428,7 +2428,7 @@ void SplitInput::scheduleMessageHeight()
     // Keep the previous value and overflow text while calculating
     if (this->lastHeightRequest_.isEmpty())
     {
-        this->ui_.messageHeight->setText("—");
+        this->ui_.messageHeight->clear();
         this->ui_.messageHeight->setStyleSheet({});
     }
     this->messageHeightTimer_.start(300);
@@ -2488,13 +2488,16 @@ void SplitInput::showMessageHeight(const MessageHeightResult &result,
     this->ui_.messageHeight->setStyleSheet(overflowing ? "color: orange" : "");
     if (result.pixels < 0)
     {
-        this->ui_.messageHeight->setText("—");
+        this->ui_.messageHeight->clear();
         this->ui_.messageHeight->setToolTip(
             result.error + "\nClick to set this channel's threshold.");
         return;
     }
-    const auto number = QString::number(qCeil(result.pixels));
-    this->ui_.messageHeight->setText((estimated ? "~" : "") + number);
+    const auto height = qCeil(result.pixels);
+    // Two normal text lines round up to 53 in MessageHeightTwitch
+    const auto number = QString::number(height);
+    this->ui_.messageHeight->setText(
+        height >= 53 ? (estimated ? "~" : "") + number : QString{});
     auto tooltip =
         QString("Message height: %1 px (293 px chat width).\n"
                 "Click to set the threshold for #%2 (0 disables it).")
