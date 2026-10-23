@@ -16,6 +16,7 @@
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "singletons/Settings.hpp"
+#include "util/Helpers.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -26,6 +27,7 @@
 #include <QLibrary>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QSet>
 #include <QTextBoundaryFinder>
 
 #include <cmath>
@@ -53,36 +55,84 @@ public:
         {
             return {-1, this->error_};
         }
-        const auto height = this->measure_(request.constData());
+        auto json = QJsonDocument::fromJson(request).object();
+        const auto text = json.value("text").toString();
+        const bool duplicateVariants = json.take("duplicateVariants").toBool();
+        const auto measure = [this, &json,
+                              duplicateVariants](const QString &body) {
+            float maximum = -1;
+            const auto variants = duplicateVariants && !body.isEmpty() ? 3 : 1;
+            for (int group = 0; group < variants; ++group)
+            {
+                const auto variant = helpers::duplicate_message::buildVariant(
+                    body, {}, 0, static_cast<uint64_t>(group));
+                // Variants over Twitch's character limit can't be sent
+                if (codepointLength(variant) > 500)
+                {
+                    continue;
+                }
+                json.insert("text", variant);
+                const auto input =
+                    QJsonDocument(json).toJson(QJsonDocument::Compact);
+                const auto height = this->measure_(input.constData());
+                if (!std::isfinite(height) || height < 0)
+                {
+                    return -1.F;
+                }
+                maximum = std::max(maximum, height);
+            }
+            return maximum;
+        };
+        const auto height = measure(text);
         if (!std::isfinite(height) || height < 0)
         {
             return {-1, "Couldn't measure this message."};
         }
         MessageHeightResult result{.pixels = height};
-        auto json = QJsonDocument::fromJson(request).object();
         const auto limit =
             static_cast<float>(json.value("heightLimit").toInt());
         if (limit <= 0 || height <= limit)
         {
             return result;
         }
-        const auto text = json.value("text").toString();
         const auto offsets = json.take("sourceOffsets").toArray();
         if (offsets.size() != text.size() + 1)
         {
             return result;
         }
         result.overflowStart = offsets.first().toInt();
+        QSet<QString> emoteNames;
+        const auto providers = json.value("providers").toObject();
+        for (const auto &provider : providers)
+        {
+            const auto emotes = provider.toArray();
+            for (const auto &emote : emotes)
+            {
+                emoteNames.insert(emote.toObject().value("name").toString());
+            }
+        }
         QTextBoundaryFinder boundaries(QTextBoundaryFinder::Grapheme, text);
         boundaries.toEnd();
         // Completing an emote can reduce the height, so check from the end
         for (auto end = boundaries.toPreviousBoundary(); end >= 0;
              end = boundaries.toPreviousBoundary())
         {
-            json.insert("text", text.left(end));
-            const auto prefix =
-                QJsonDocument(json).toJson(QJsonDocument::Compact);
-            const auto prefixHeight = this->measure_(prefix.constData());
+            // Don't split an emote name when finding where overflow starts
+            if (end > 0 && text[end] != ' ')
+            {
+                const auto start = text.lastIndexOf(' ', end - 1) + 1;
+                auto wordEnd = text.indexOf(' ', end);
+                if (wordEnd < 0)
+                {
+                    wordEnd = text.size();
+                }
+                if (start < end &&
+                    emoteNames.contains(text.mid(start, wordEnd - start)))
+                {
+                    continue;
+                }
+            }
+            const auto prefixHeight = measure(text.left(end).trimmed());
             if (!std::isfinite(prefixHeight) || prefixHeight < 0)
             {
                 result.overflowStart = -1;
@@ -233,6 +283,36 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
     std::vector<qsizetype> sourceOffsets;
     text = getApp()->getEmotes()->getEmojis()->replaceShortCodes(
         text, &sourceOffsets);
+    // Match the whitespace normalization done before sending
+    QString simplified;
+    std::vector<qsizetype> simplifiedOffsets;
+    bool pendingSpace = false;
+    for (qsizetype index = 0; index < text.size(); ++index)
+    {
+        if (text[index].isSpace())
+        {
+            pendingSpace = !simplified.isEmpty();
+            continue;
+        }
+        if (simplified.isEmpty())
+        {
+            simplifiedOffsets.push_back(sourceOffsets[index]);
+        }
+        else if (pendingSpace)
+        {
+            simplified += ' ';
+            simplifiedOffsets.push_back(sourceOffsets[index]);
+        }
+        simplified += text[index];
+        simplifiedOffsets.push_back(sourceOffsets[index + 1]);
+        pendingSpace = false;
+    }
+    if (simplifiedOffsets.empty())
+    {
+        simplifiedOffsets.push_back(sourceOffsets.back());
+    }
+    text = std::move(simplified);
+    sourceOffsets = std::move(simplifiedOffsets);
     if (text.toUcs4().size() > 500)
     {
         request.error = "Can't measure messages over 500 characters.";
@@ -264,14 +344,17 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
     {
         offsets.append(static_cast<int>(offset) + inputOffset);
     }
-    QJsonObject json{{"text", text},
-                     {"login", login},
-                     {"displayName", displayName},
-                     {"badges", info ? info->badgeCount : 0},
-                     {"action", action},
-                     {"providers", providers},
-                     {"heightLimit", messageHeightLimit(channel.getName())},
-                     {"sourceOffsets", offsets}};
+    QJsonObject json{
+        {"text", text},
+        {"login", login},
+        {"displayName", displayName},
+        {"badges", info ? info->badgeCount : 0},
+        {"action", action},
+        {"providers", providers},
+        {"duplicateVariants",
+         getSettings()->allowDuplicateMessages && !channel.hasHighRateLimit()},
+        {"heightLimit", messageHeightLimit(channel.getName())},
+        {"sourceOffsets", offsets}};
     request.json = QJsonDocument(json).toJson(QJsonDocument::Compact);
     return request;
 }

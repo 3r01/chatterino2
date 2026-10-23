@@ -23,6 +23,7 @@
 #include "providers/bttv/BttvEmotes.hpp"
 #include "providers/ffz/FfzEmotes.hpp"
 #include "providers/seventv/SeventvEmotes.hpp"
+#include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "singletons/Fonts.hpp"
 #include "singletons/Paths.hpp"
@@ -1084,6 +1085,133 @@ TEST(SplitInput, HeightOverflowBoundary)
     EXPECT_LE(measureMessageHeight(QJsonDocument(request).toJson()).pixels, 50);
     request.insert("text", text.left(result.overflowStart + 1));
     EXPECT_GT(measureMessageHeight(QJsonDocument(request).toJson()).pixels, 50);
+}
+
+TEST(SplitInput, HeightHighlightsWholeEmote)
+{
+    if (!QFileInfo::exists(QCoreApplication::applicationDirPath() +
+                           "/message-height/upstream-revision"))
+    {
+        GTEST_SKIP() << "MessageHeightTwitch isn't installed";
+    }
+    const QString text = "hello BAND";
+    QJsonArray offsets;
+    for (int index = 0; index <= text.size(); ++index)
+    {
+        offsets.append(index);
+    }
+    QJsonObject request{
+        {"text", text},
+        {"login", "iore"},
+        {"displayName", "Iore"},
+        {"badges", 1},
+        {"providers",
+         QJsonObject{
+             {"bttv", QJsonArray{QJsonObject{
+                          {"name", "BAND"}, {"width", 75}, {"height", 100}}}}}},
+        {"heightLimit", 50},
+        {"sourceOffsets", offsets}};
+    for (const bool duplicates : {false, true})
+    {
+        request.insert("duplicateVariants", duplicates);
+        const auto result =
+            measureMessageHeight(QJsonDocument(request).toJson());
+        ASSERT_TRUE(result.error.isEmpty());
+        EXPECT_GT(result.pixels, 50);
+
+        // Highlight BAND, not just the D that completes it
+        EXPECT_EQ(result.overflowStart, 6);
+    }
+}
+
+TEST(SplitInput, HeightRequestUsesSendWhitespace)
+{
+    ::testing::NiceMock<mock::Helix> helix;
+    initializeHelix(&helix);
+    MockApplication app;
+    auto &accounts = app.accounts.twitch;
+    accounts.load();
+    accounts.accounts.append(
+        std::make_shared<TwitchAccount>("iore", "", "", "123"));
+    accounts.currentUsername = "iore";
+    ASSERT_FALSE(accounts.getCurrent()->isAnon());
+    auto channel = std::make_shared<TwitchChannel>("forsen");
+    app.settings.allowDuplicateMessages = true;
+    const auto request = prepareMessageHeight(*channel, "  a \t b \n c  ");
+    ASSERT_TRUE(request.error.isEmpty());
+    const auto json = QJsonDocument::fromJson(request.json).object();
+
+    // Use the text that sending produces, but keep the original highlight positions
+    EXPECT_EQ(json.value("text").toString(), "a b c");
+    EXPECT_EQ(json.value("sourceOffsets").toArray(),
+              (QJsonArray{2, 3, 6, 7, 10, 11}));
+    EXPECT_TRUE(json.value("duplicateVariants").toBool());
+
+    // Don't add suffixes when duplicate bypass isn't used
+    app.settings.allowDuplicateMessages = false;
+    EXPECT_FALSE(
+        QJsonDocument::fromJson(prepareMessageHeight(*channel, "a").json)
+            .object()
+            .value("duplicateVariants")
+            .toBool());
+    app.settings.allowDuplicateMessages = true;
+    auto ownChannel = std::make_shared<TwitchChannel>("iore");
+    EXPECT_FALSE(
+        QJsonDocument::fromJson(prepareMessageHeight(*ownChannel, "a").json)
+            .object()
+            .value("duplicateVariants")
+            .toBool());
+}
+
+TEST(SplitInput, HeightIncludesDuplicateSuffixes)
+{
+    if (!QFileInfo::exists(QCoreApplication::applicationDirPath() +
+                           "/message-height/upstream-revision"))
+    {
+        GTEST_SKIP() << "MessageHeightTwitch isn't installed";
+    }
+    const auto text = QString(30, 'a');
+    QJsonArray offsets;
+    for (int index = 0; index <= text.size(); ++index)
+    {
+        offsets.append(index);
+    }
+    QJsonObject request{{"text", text},
+                        {"login", "iore"},
+                        {"displayName", "Iore"},
+                        {"badges", 1},
+                        {"providers", QJsonObject{}},
+                        {"heightLimit", 40},
+                        {"sourceOffsets", offsets}};
+    const auto original = measureMessageHeight(QJsonDocument(request).toJson());
+    ASSERT_TRUE(original.error.isEmpty());
+    EXPECT_LT(original.pixels, 40);
+
+    // The invisible suffix can push an otherwise fitting message onto another line
+    request.insert("duplicateVariants", true);
+    const auto worst = measureMessageHeight(QJsonDocument(request).toJson());
+    ASSERT_TRUE(worst.error.isEmpty());
+    EXPECT_GT(worst.pixels, 40);
+    EXPECT_GE(worst.overflowStart, 0);
+    EXPECT_LT(worst.overflowStart, text.size());
+
+    request.insert("duplicateVariants", false);
+    request.insert("heightLimit", 0);
+    float maximum = original.pixels;
+    for (const auto &suffix : {QString(" \u034f"), QString("  \u034f")})
+    {
+        request.insert("text", text + suffix);
+        maximum = std::max(
+            maximum,
+            measureMessageHeight(QJsonDocument(request).toJson()).pixels);
+    }
+    EXPECT_EQ(worst.pixels, maximum);
+
+    // Don't measure duplicate variants that exceed Twitch's character limit
+    request.insert("text", QString(500, 'a'));
+    request.insert("duplicateVariants", true);
+    EXPECT_TRUE(
+        measureMessageHeight(QJsonDocument(request).toJson()).error.isEmpty());
 }
 
 TEST(SplitInput, ReplyPrefixFormatting)
