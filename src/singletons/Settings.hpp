@@ -222,7 +222,7 @@ public:
         "/appearance/messages/showTwitchGifs",
         true,
     };
-    FloatSetting twitchGifScale = {"/appearance/messages/twitchGifScale", 1.F};
+    FloatSetting twitchGifScale = {"/appearance/messages/twitchGifScale", 1.4F};
     BoolSetting separateMessages = {"/appearance/messages/separateMessages",
                                     false};
     BoolSetting fadeMessageHistory = {"/appearance/messages/fadeMessageHistory",

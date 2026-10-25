@@ -117,6 +117,11 @@ void InputCompletionPopup::setInputAction(ActionCallback callback)
     this->callback_ = std::move(callback);
 }
 
+bool InputCompletionPopup::hasCompletions() const
+{
+    return this->model_.rowCount() != 0;
+}
+
 std::optional<std::pair<QStringList, int>>
     InputCompletionPopup::selectedCompletions(bool isFirstWord) const
 {
@@ -163,11 +168,6 @@ std::optional<std::pair<QStringList, int>>
         }
     }
     return std::pair{std::move(completions), selectedIndex};
-}
-
-bool InputCompletionPopup::hasCompletions() const
-{
-    return this->model_.rowCount() != 0;
 }
 
 bool InputCompletionPopup::eventFilter(QObject *watched, QEvent *event)
