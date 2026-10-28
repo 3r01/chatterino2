@@ -15,6 +15,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace chatterino {
 
@@ -33,8 +34,10 @@ class CommandController final
 public:
     SignalVector<Command> items;
 
+    // Dry runs can keep input positions for highlighting expanded commands
     QString execCommand(const QString &text, std::shared_ptr<Channel> channel,
-                        bool dryRun);
+                        bool dryRun,
+                        std::vector<qsizetype> *sourceOffsets = nullptr);
     QStringList getDefaultChatterinoCommandList();
     bool hasUserOrPluginCommand(QStringView commandName) const;
 
@@ -43,10 +46,11 @@ public:
 
     CommandModel *createModel(QObject *parent);
 
-    QString execCustomCommand(
-        const QStringList &words, const Command &command, bool dryRun,
-        ChannelPtr channel, const Message *message = nullptr,
-        std::unordered_map<QString, QString> context = {});
+    QString execCustomCommand(const QStringList &words, const Command &command,
+                              bool dryRun, ChannelPtr channel,
+                              const Message *message = nullptr,
+                              std::unordered_map<QString, QString> context = {},
+                              std::vector<qsizetype> *sourceOffsets = nullptr);
 #ifdef CHATTERINO_HAVE_PLUGINS
     bool registerPluginCommand(const QString &commandName);
     bool unregisterPluginCommand(const QString &commandName);

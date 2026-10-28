@@ -19,6 +19,8 @@
 
 #include <QStringBuilder>
 
+#include <numeric>
+
 using namespace chatterino;
 
 using ::testing::_;
@@ -102,6 +104,51 @@ TEST(Commands, customCommandArguments)
     EXPECT_EQ(app.commands.execCommand("/triple word trigger one two three",
                                        channel, false),
               "one|two|one two three|two three");
+}
+
+TEST(Commands, CommandSourceOffsets)
+{
+    MockApplication app;
+    auto channel = std::make_shared<TwitchChannel>("forsen");
+    app.commands.items.append(Command{"/nam", "NaM {1+}"});
+    app.commands.items.append(Command{"/swap", "{2} {1}"});
+    app.commands.items.append(Command{"/spaced trigger", "prefix {1+}"});
+    app.commands.items.append(Command{"/alias", "/spaced trigger {1+}"});
+    std::vector<qsizetype> offsets;
+
+    const auto text =
+        app.commands.execCommand("  /nam  nam nam", channel, true, &offsets);
+    EXPECT_EQ(text, "NaM nam nam");
+    ASSERT_EQ(offsets.size(), text.size() + 1);
+    // Fixed output points at the command, arguments point at their input text
+    EXPECT_EQ(offsets[0], 2);
+    EXPECT_EQ(offsets[4], 8);
+    EXPECT_EQ(offsets[8], 12);
+    EXPECT_EQ(offsets.back(), 15);
+
+    EXPECT_EQ(
+        app.commands.execCommand("/swap first second", channel, true, &offsets),
+        "second first");
+    EXPECT_EQ(offsets[0], 12);
+    EXPECT_EQ(offsets[7], 6);
+
+    for (const auto &input :
+         {QString("/spaced trigger one two"), QString("/alias one two")})
+    {
+        const auto output =
+            app.commands.execCommand(input, channel, true, &offsets);
+        EXPECT_EQ(output, "prefix one two");
+        ASSERT_EQ(offsets.size(), output.size() + 1);
+        EXPECT_EQ(offsets[output.indexOf("one")], input.indexOf("one"));
+        EXPECT_EQ(offsets[output.indexOf("two")], input.indexOf("two"));
+    }
+
+    const QString emojiInput = "/nam :smile: nam";
+    const auto emojiOutput =
+        app.commands.execCommand(emojiInput, channel, true, &offsets);
+    ASSERT_EQ(offsets.size(), emojiOutput.size() + 1);
+    EXPECT_EQ(offsets[emojiOutput.lastIndexOf("nam")],
+              emojiInput.lastIndexOf("nam"));
 }
 
 TEST(Commands, parseBanActions)
@@ -1230,6 +1277,15 @@ TEST(Commands, customCommands)
         auto got = app.getCommands()->execCustomCommand(
             c.words, c.command, false, channel, nullptr, c.context);
         ASSERT_EQ(got, c.expected) << "index=" << i;
+
+        const auto input = c.words.join(' ');
+        std::vector<qsizetype> offsets(input.size() + 1);
+        // NOLINTNEXTLINE(modernize-use-ranges)
+        std::iota(offsets.begin(), offsets.end(), qsizetype{0});
+        const auto tracked = app.commands.execCustomCommand(
+            c.words, c.command, true, channel, nullptr, c.context, &offsets);
+        EXPECT_EQ(tracked, c.expected) << "index=" << i;
+        EXPECT_EQ(offsets.size(), tracked.size() + 1) << "index=" << i;
     }
 }
 

@@ -256,8 +256,9 @@ QString channelKey(const QString &channel)
 
 }  // namespace
 
-MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
-                                          QString text, bool commandOutput)
+MessageHeightRequest prepareMessageHeight(
+    const TwitchChannel &channel, QString text,
+    const std::vector<qsizetype> &inputOffsets)
 {
     MessageHeightRequest request;
     const auto account = getApp()->getAccounts()->twitch.getCurrent();
@@ -283,6 +284,11 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
     std::vector<qsizetype> sourceOffsets;
     text = getApp()->getEmotes()->getEmojis()->replaceShortCodes(
         text, &sourceOffsets);
+    for (auto &offset : sourceOffsets)
+    {
+        offset = inputOffsets.empty() ? offset + inputOffset
+                                      : inputOffsets[offset + inputOffset];
+    }
     // Match the whitespace normalization done before sending
     QString simplified;
     std::vector<qsizetype> simplifiedOffsets;
@@ -342,8 +348,7 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
     QJsonArray offsets;
     for (const auto offset : sourceOffsets)
     {
-        offsets.append(commandOutput ? 0
-                                     : static_cast<int>(offset) + inputOffset);
+        offsets.append(static_cast<int>(offset));
     }
     QJsonObject json{
         {"text", text},

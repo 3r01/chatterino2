@@ -7,6 +7,8 @@
 #include <QByteArray>
 #include <QString>
 
+#include <vector>
+
 namespace chatterino {
 
 class TwitchChannel;
@@ -24,9 +26,9 @@ struct MessageHeightResult {
 };
 
 // Read channel and account data on the GUI thread, then measure on a worker thread
-MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
-                                          QString text,
-                                          bool commandOutput = false);
+MessageHeightRequest prepareMessageHeight(
+    const TwitchChannel &channel, QString text,
+    const std::vector<qsizetype> &sourceOffsets = {});
 MessageHeightResult measureMessageHeight(const QByteArray &request);
 
 int messageHeightLimit(const QString &channel);

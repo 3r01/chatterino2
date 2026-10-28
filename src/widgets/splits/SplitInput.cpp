@@ -9,12 +9,10 @@
 #include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
 #include "controllers/commands/CommandController.hpp"
-#include "controllers/emotes/EmoteController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "controllers/spellcheck/SpellChecker.hpp"
 #include "messages/Link.hpp"
 #include "messages/Message.hpp"
-#include "providers/emoji/Emojis.hpp"
 #include "providers/twitch/api/TwitchGifs.hpp"
 #include "providers/twitch/api/TwitchIntegrity.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
@@ -2489,12 +2487,10 @@ void SplitInput::updateMessageHeight()
         return;
     }
     const auto input = this->getInputText();
-    const auto plainPreview =
-        getApp()->getEmotes()->getEmojis()->replaceShortCodes(input.trimmed());
-    const bool commandOutput = this->inputTextForHighlights_ != plainPreview;
-    const auto request = prepareMessageHeight(
-        *channel, commandOutput ? this->inputTextForHighlights_ : input,
-        commandOutput);
+    std::vector<qsizetype> sourceOffsets;
+    const auto output = getApp()->getCommands()->execCommand(
+        input, this->split_->getChannel(), true, &sourceOffsets);
+    const auto request = prepareMessageHeight(*channel, output, sourceOffsets);
     if (!request.error.isEmpty())
     {
         this->showMessageHeight({-1, request.error}, false);

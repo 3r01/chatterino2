@@ -1304,6 +1304,44 @@ TEST(SplitInput, HeightCounterUsesCommandOutput)
     }
 }
 
+TEST(SplitInput, HeightCommandOverflowHighlightsArgument)
+{
+    ::testing::NiceMock<mock::Helix> helix;
+    initializeHelix(&helix);
+    MockApplication app;
+    auto &accounts = app.accounts.twitch;
+    accounts.load();
+    accounts.accounts.append(
+        std::make_shared<TwitchAccount>("iore", "", "", "123"));
+    accounts.currentUsername = "iore";
+    app.settings.showMessageHeight = true;
+    app.commands.items.append(Command{"/nam", "NaM NaM NaM {1+}"});
+    Split split(nullptr);
+    split.setChannel(
+        IndirectChannel{std::make_shared<TwitchChannel>("forsen")});
+    TestSplitInput input(&split);
+    setMessageHeightLimit("forsen", 120);
+    input.setInputText("/nam nam nam nam");
+    input.updateMessageHeight();
+    ASSERT_FALSE(input.heightRequest().isEmpty());
+    const auto json = QJsonDocument::fromJson(input.heightRequest()).object();
+    const auto output = json.value("text").toString();
+    EXPECT_EQ(output, "NaM NaM NaM nam nam nam");
+    const auto offsets = json.value("sourceOffsets").toArray();
+    const auto overflowStart = offsets.at(output.lastIndexOf("nam")).toInt();
+
+    // Only the overflowing argument turns orange
+    input.showMessageHeight({.pixels = 142, .overflowStart = overflowStart},
+                            false);
+    auto *edit = input.findChild<QTextEdit *>();
+    ASSERT_NE(edit, nullptr);
+    const auto selections = edit->extraSelections();
+    ASSERT_FALSE(selections.isEmpty());
+    EXPECT_EQ(selections.last().cursor.selectionStart(), 13);
+    EXPECT_EQ(selections.last().cursor.selectedText(), "nam");
+    EXPECT_EQ(selections.last().format.foreground().color(), QColor("orange"));
+}
+
 TEST(SplitInput, HeightRequestUsesSendWhitespace)
 {
     ::testing::NiceMock<mock::Helix> helix;

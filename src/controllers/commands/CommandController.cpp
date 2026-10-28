@@ -549,11 +549,41 @@ bool CommandController::hasUserOrPluginCommand(QStringView commandName) const
 }
 
 QString CommandController::execCommand(const QString &textNoEmoji,
-                                       ChannelPtr channel, bool dryRun)
+                                       ChannelPtr channel, bool dryRun,
+                                       std::vector<qsizetype> *sourceOffsets)
 {
-    QString text =
-        getApp()->getEmotes()->getEmojis()->replaceShortCodes(textNoEmoji);
+    QString text = getApp()->getEmotes()->getEmojis()->replaceShortCodes(
+        textNoEmoji, sourceOffsets);
     QStringList words = text.split(' ', Qt::SkipEmptyParts);
+
+    const auto expandCommand = [&](const Command &command,
+                                   qsizetype firstWord = 0) {
+        if (sourceOffsets != nullptr)
+        {
+            const auto inputOffsets = std::move(*sourceOffsets);
+            sourceOffsets->clear();
+            qsizetype position = 0;
+            for (qsizetype index = 0; index < words.size(); ++index)
+            {
+                const auto &word = words[index];
+                position = text.indexOf(word, position);
+                if (index >= firstWord)
+                {
+                    if (index > firstWord)
+                    {
+                        sourceOffsets->push_back(inputOffsets[position - 1]);
+                    }
+                    sourceOffsets->insert(
+                        sourceOffsets->end(), inputOffsets.begin() + position,
+                        inputOffsets.begin() + position + word.size());
+                }
+                position += word.size();
+            }
+            sourceOffsets->push_back(inputOffsets[position]);
+        }
+        return this->execCustomCommand(words.mid(firstWord), command, dryRun,
+                                       channel, nullptr, {}, sourceOffsets);
+    };
 
     if (words.length() == 0)
     {
@@ -567,8 +597,18 @@ QString CommandController::execCommand(const QString &textNoEmoji,
         const auto it = this->userCommands_.find(commandName);
         if (it != this->userCommands_.end())
         {
+            const auto expanded = expandCommand(it.value());
+            std::vector<qsizetype> emojiOffsets;
             text = getApp()->getEmotes()->getEmojis()->replaceShortCodes(
-                this->execCustomCommand(words, it.value(), dryRun, channel));
+                expanded, sourceOffsets != nullptr ? &emojiOffsets : nullptr);
+            if (sourceOffsets != nullptr)
+            {
+                for (auto &offset : emojiOffsets)
+                {
+                    offset = (*sourceOffsets)[offset];
+                }
+                *sourceOffsets = std::move(emojiOffsets);
+            }
 
             words = text.split(' ', Qt::SkipEmptyParts);
 
@@ -615,8 +655,7 @@ QString CommandController::execCommand(const QString &textNoEmoji,
         const auto it = this->userCommands_.find(commandName);
         if (it != this->userCommands_.end())
         {
-            return this->execCustomCommand(words.mid(i + 1), it.value(), dryRun,
-                                           channel);
+            return expandCommand(it.value(), i + 1);
         }
     }
 
@@ -668,9 +707,44 @@ void CommandController::registerCommand(const QString &commandName,
 QString CommandController::execCustomCommand(
     const QStringList &words, const Command &command, bool /* dryRun */,
     ChannelPtr channel, const Message *message,
-    std::unordered_map<QString, QString> context)
+    std::unordered_map<QString, QString> context,
+    std::vector<qsizetype> *sourceOffsets)
 {
     QString result;
+    const auto inputOffsets = sourceOffsets != nullptr
+                                  ? std::move(*sourceOffsets)
+                                  : std::vector<qsizetype>{};
+    std::vector<qsizetype> wordStarts;
+    if (sourceOffsets != nullptr)
+    {
+        sourceOffsets->assign(1, inputOffsets.front());
+        qsizetype position = 0;
+        for (const auto &word : words)
+        {
+            wordStarts.push_back(position);
+            position += word.size() + 1;
+        }
+    }
+    const auto append = [&](const QString &value, qsizetype sourceStart = -1) {
+        if (value.isEmpty())
+        {
+            return;
+        }
+        if (sourceOffsets != nullptr)
+        {
+            sourceOffsets->pop_back();
+            for (qsizetype index = 0; index < value.size(); ++index)
+            {
+                sourceOffsets->push_back(sourceStart >= 0
+                                             ? inputOffsets[sourceStart + index]
+                                             : inputOffsets.front());
+            }
+            sourceOffsets->push_back(
+                sourceStart >= 0 ? inputOffsets[sourceStart + value.size()]
+                                 : inputOffsets.front());
+        }
+        result += value;
+    };
 
     static QRegularExpression parseCommand(
         R"((^|[^{])({{)*{(\d+\+?|([a-zA-Z.-]+)(?:;(.+?))?)})");
@@ -690,8 +764,8 @@ QString CommandController::execCustomCommand(
             break;
         }
 
-        result += command.func.mid(lastCaptureEnd,
-                                   match.capturedStart() - lastCaptureEnd + 1);
+        append(command.func.mid(lastCaptureEnd,
+                                match.capturedStart() - lastCaptureEnd + 1));
 
         lastCaptureEnd = match.capturedEnd();
         matchOffset = lastCaptureEnd - 1;
@@ -713,7 +787,7 @@ QString CommandController::execCustomCommand(
             if (var != context.end())
             {
                 // Found variable in `context`
-                result += var->second.isEmpty() ? altText : var->second;
+                append(var->second.isEmpty() ? altText : var->second);
                 continue;
             }
 
@@ -721,12 +795,12 @@ QString CommandController::execCustomCommand(
             if (it != COMMAND_VARS.end())
             {
                 // Found variable in `COMMAND_VARS`
-                result += it->second(altText, channel, message);
+                append(it->second(altText, channel, message));
                 continue;
             }
 
             // Fall back to replacing it with the actual matched string
-            result += "{" + match.captured(3) + "}";
+            append("{" + match.captured(3) + "}");
             continue;
         }
 
@@ -742,26 +816,43 @@ QString CommandController::execCustomCommand(
             {
                 if (!first)
                 {
-                    result += " ";
+                    append(" ",
+                           sourceOffsets != nullptr ? wordStarts[i] - 1 : -1);
                 }
-                result += words[i];
+                append(words[i], sourceOffsets != nullptr ? wordStarts[i] : -1);
                 first = false;
             }
         }
         else
         {
-            result += words[wordIndex];
+            append(words[wordIndex],
+                   sourceOffsets != nullptr ? wordStarts[wordIndex] : -1);
         }
     }
 
-    result += command.func.mid(lastCaptureEnd);
+    append(command.func.mid(lastCaptureEnd));
 
     if (result.size() > 0 && result.at(0) == '{')
     {
         result = result.mid(1);
+        if (sourceOffsets != nullptr)
+        {
+            sourceOffsets->erase(sourceOffsets->begin());
+        }
     }
 
-    return result.replace("{{", "{");
+    if (sourceOffsets == nullptr)
+    {
+        return result.replace("{{", "{");
+    }
+    qsizetype position = 0;
+    while ((position = result.indexOf("{{", position)) >= 0)
+    {
+        result.remove(position, 1);
+        sourceOffsets->erase(sourceOffsets->begin() + position + 1);
+        ++position;
+    }
+    return result;
 }
 
 QStringList CommandController::getDefaultChatterinoCommandList()
