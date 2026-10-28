@@ -25,7 +25,8 @@ struct MessageHeightResult {
 
 // Read channel and account data on the GUI thread, then measure on a worker thread
 MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
-                                          QString text);
+                                          QString text,
+                                          bool commandOutput = false);
 MessageHeightResult measureMessageHeight(const QByteArray &request);
 
 int messageHeightLimit(const QString &channel);

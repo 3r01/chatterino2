@@ -257,7 +257,7 @@ QString channelKey(const QString &channel)
 }  // namespace
 
 MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
-                                          QString text)
+                                          QString text, bool commandOutput)
 {
     MessageHeightRequest request;
     const auto account = getApp()->getAccounts()->twitch.getCurrent();
@@ -342,7 +342,8 @@ MessageHeightRequest prepareMessageHeight(const TwitchChannel &channel,
     QJsonArray offsets;
     for (const auto offset : sourceOffsets)
     {
-        offsets.append(static_cast<int>(offset) + inputOffset);
+        offsets.append(commandOutput ? 0
+                                     : static_cast<int>(offset) + inputOffset);
     }
     QJsonObject json{
         {"text", text},

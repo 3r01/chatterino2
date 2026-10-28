@@ -144,6 +144,12 @@ public:
     using SplitInput::insertCompletionText;
     using SplitInput::showMessageHeight;
     using SplitInput::SplitInput;
+    using SplitInput::updateMessageHeight;
+
+    QByteArray heightRequest() const
+    {
+        return this->lastHeightRequest_;
+    }
 
     void undoInput()
     {
@@ -1264,6 +1270,37 @@ TEST(SplitInput, HeightHighlightsWholeEmote)
 
         // Highlight BAND, not just the D that completes it
         EXPECT_EQ(result.overflowStart, 6);
+    }
+}
+
+TEST(SplitInput, HeightCounterUsesCommandOutput)
+{
+    ::testing::NiceMock<mock::Helix> helix;
+    initializeHelix(&helix);
+    MockApplication app;
+    auto &accounts = app.accounts.twitch;
+    accounts.load();
+    accounts.accounts.append(
+        std::make_shared<TwitchAccount>("iore", "", "", "123"));
+    accounts.currentUsername = "iore";
+    app.settings.showMessageHeight = true;
+    const auto output = QString("NaM BAND ").repeated(10).trimmed();
+    app.commands.items.append(Command{"/heighttest", output});
+    Split split(nullptr);
+    split.setChannel(
+        IndirectChannel{std::make_shared<TwitchChannel>("forsen")});
+    TestSplitInput input(&split);
+    input.setInputText("/heighttest");
+    input.updateMessageHeight();
+    ASSERT_FALSE(input.heightRequest().isEmpty());
+    const auto json = QJsonDocument::fromJson(input.heightRequest()).object();
+
+    EXPECT_EQ(json.value("text").toString(), output);
+    // Highlight the command, not positions from its expanded output
+    const auto offsets = json.value("sourceOffsets").toArray();
+    for (const auto &offset : offsets)
+    {
+        EXPECT_EQ(offset.toInt(), 0);
     }
 }
 
