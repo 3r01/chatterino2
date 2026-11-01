@@ -42,6 +42,7 @@ public:
     bool hasUserOrPluginCommand(QStringView commandName) const;
 
     CommandController(const Paths &paths);
+    ~CommandController();
     void save();
 
     CommandModel *createModel(QObject *parent);

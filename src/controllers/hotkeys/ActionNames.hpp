@@ -256,20 +256,6 @@ inline const std::map<HotkeyCategory, ActionDefinitionMap> actionNames{
          {"previousMessage",
           ActionDefinition{"Choose previously sent message"}},
          {"redo", ActionDefinition{"Redo"}},
-         {"selectReplyTarget",
-          ActionDefinition{
-              .displayName = "Select message to reply to",
-              .argumentDescription = "<direction: older or newer>",
-              .minCountArguments = 1,
-              .maxCountArguments = 1,
-              .possibleArguments{
-                  {"Older", {"older"}},
-                  {"Newer", {"newer"}},
-              },
-              .argumentsPrompt = "Direction:",
-              .argumentsPromptHover =
-                  "Which direction to select a message from?",
-          }},
          {"selectAll", ActionDefinition{"Select all"}},
          {"selectWord", ActionDefinition{"Select word"}},
          {"sendMessage",
@@ -327,7 +313,7 @@ inline const std::map<HotkeyCategory, ActionDefinitionMap> actionNames{
          {"openSettings", ActionDefinition{"Open settings"}},
          {"openAccountSelector", ActionDefinition{"Open account selector"}},
          {"openFollowedChannels",
-          ActionDefinition{.displayName = "Open followed channels"}},
+          ActionDefinition{.displayName = "Open Following window"}},
          {"openTab",
           ActionDefinition{
               "Select tab",
