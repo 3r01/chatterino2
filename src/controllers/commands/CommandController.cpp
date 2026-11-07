@@ -749,12 +749,10 @@ QString CommandController::execCustomCommand(
     };
 
     static QRegularExpression parseCommand(
-        R"((^|[^{])({{)*{(\d+\+?|([a-zA-Z.-]+)(?:;(.+?))?)})");
+        R"((?:^|[^{])(?:{{)*{(\d+\+?|([a-zA-Z.-]+))(;(.+?))?})");
 
-    int lastCaptureEnd = 0;
-
-    auto globalMatch = parseCommand.globalMatch(command.func);
-    int matchOffset = 0;
+    qsizetype lastCaptureEnd = 0;
+    qsizetype matchOffset = 0;
 
     while (true)
     {
@@ -772,17 +770,16 @@ QString CommandController::execCustomCommand(
         lastCaptureEnd = match.capturedEnd();
         matchOffset = lastCaptureEnd - 1;
 
-        QString wordIndexMatch = match.captured(3);
+        auto placeholderName = match.captured(1);
+        auto altText = match.captured(4);  // alt text or empty string
 
-        bool plus = wordIndexMatch.at(wordIndexMatch.size() - 1) == '+';
-        wordIndexMatch = wordIndexMatch.replace("+", "");
+        bool plus = placeholderName.at(placeholderName.size() - 1) == '+';
 
         bool ok;
-        int wordIndex = wordIndexMatch.replace("=", "").toInt(&ok);
+        int wordIndex = placeholderName.replace("+", "").toInt(&ok);
         if (!ok || wordIndex == 0)
         {
-            auto varName = match.captured(4);
-            auto altText = match.captured(5);  // alt text or empty string
+            auto varName = match.captured(2);
 
             auto var = context.find(varName);
 
@@ -802,12 +799,13 @@ QString CommandController::execCustomCommand(
             }
 
             // Fall back to replacing it with the actual matched string
-            append("{" + match.captured(3) + "}");
+            append("{" + match.captured(1) + match.captured(3) + "}");
             continue;
         }
 
         if (words.length() <= wordIndex)
         {
+            append(altText);
             continue;
         }
 
