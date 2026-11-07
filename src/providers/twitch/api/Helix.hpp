@@ -69,10 +69,14 @@ struct HelixMinimalUser {
         switch (mode)
         {
             case UsernameDisplayMode::Username:
-                return this->login;
+                if (hasLocalizedName)
+                {
+                    return this->login;
+                }
+                return this->displayName;
 
             case UsernameDisplayMode::LocalizedName:
-                return hasLocalizedName ? this->displayName : this->login;
+                return this->displayName;
 
             default:
             case UsernameDisplayMode::UsernameAndLocalizedName:
@@ -81,17 +85,44 @@ struct HelixMinimalUser {
                     return this->login + QStringLiteral(" (") +
                            this->displayName + QStringLiteral(")");
                 }
-                return this->login;
+                return this->displayName;
         }
+    }
+};
+
+struct HelixChannelFollower {
+    QString userId;
+    QString userLogin;
+    QString userName;
+    QDateTime followedAt;
+
+    explicit HelixChannelFollower(const QJsonObject &jsonObject)
+        : userId(jsonObject["user_id"].toString())
+        , userLogin(jsonObject["user_login"].toString())
+        , userName(jsonObject["user_name"].toString())
+        , followedAt(QDateTime::fromString(jsonObject["followed_at"].toString(),
+                                           Qt::ISODate))
+    {
     }
 };
 
 struct HelixGetChannelFollowersResponse {
     int total;
+    std::optional<HelixChannelFollower> specifiedFollower;
 
-    explicit HelixGetChannelFollowersResponse(const QJsonObject &jsonObject)
+    explicit HelixGetChannelFollowersResponse(const QJsonObject &jsonObject,
+                                              bool followerSpecified)
         : total(jsonObject.value("total").toInt())
     {
+        if (followerSpecified)
+        {
+            const auto first = jsonObject["data"].toArray().at(0);
+            if (first.isObject())
+            {
+                this->specifiedFollower =
+                    HelixChannelFollower(first.toObject());
+            }
+        }
     }
 };
 
@@ -786,7 +817,7 @@ public:
 
     // https://dev.twitch.tv/docs/api/reference/#get-channel-followers
     virtual void getChannelFollowers(
-        QString broadcasterID,
+        QString broadcasterID, QString userID,
         ResultCallback<HelixGetChannelFollowersResponse> successCallback,
         std::function<void(QString)> failureCallback) = 0;
 
@@ -1124,6 +1155,22 @@ public:
         ResultCallback<std::optional<HelixFollowedChannel>> successCallback,
         FailureCallback<QString> failureCallback) = 0;
 
+    /// https://dev.twitch.tv/docs/api/reference/#get-followed-channels
+    virtual void getFollowedChannels(
+        QString userID,
+        const ResultCallback<std::vector<HelixFollowedChannel>,
+                             HelixPaginationState> &pageCallback,
+        const FailureCallback<QString> &failureCallback,
+        CancellationToken &&token) = 0;
+
+    /// https://dev.twitch.tv/docs/api/reference/#get-followed-streams
+    virtual void getFollowedStreams(
+        QString userID,
+        const ResultCallback<std::vector<HelixStream>, HelixPaginationState>
+            &pageCallback,
+        const FailureCallback<QString> &failureCallback,
+        CancellationToken &&token) = 0;
+
     /// https://dev.twitch.tv/docs/api/reference#create-poll
     virtual void createPoll(QString broadcasterID, QString title,
                             QStringList choices, std::chrono::seconds duration,
@@ -1206,6 +1253,11 @@ public:
         FailureCallback<HelixGetSharedChatSessionError, QString>
             failureCallback) = 0;
 
+    /// Technically not a helix request >:-)
+    /// https://dev.twitch.tv/docs/authentication/validate-tokens#validating-tokens
+    virtual void validateToken(NetworkSuccessCallback successCallback,
+                               NetworkErrorCallback errorCallback) = 0;
+
     virtual void update(QString clientId, QString oauthToken) = 0;
 
 protected:
@@ -1232,7 +1284,7 @@ public:
 
     // https://dev.twitch.tv/docs/api/reference/#get-channel-followers
     void getChannelFollowers(
-        QString broadcasterID,
+        QString broadcasterID, QString userID,
         ResultCallback<HelixGetChannelFollowersResponse> successCallback,
         std::function<void(QString)> failureCallback) final;
 
@@ -1565,6 +1617,20 @@ public:
         ResultCallback<std::optional<HelixFollowedChannel>> successCallback,
         FailureCallback<QString> failureCallback) final;
 
+    void getFollowedChannels(
+        QString userID,
+        const ResultCallback<std::vector<HelixFollowedChannel>,
+                             HelixPaginationState> &pageCallback,
+        const FailureCallback<QString> &failureCallback,
+        CancellationToken &&token) final;
+
+    void getFollowedStreams(
+        QString userID,
+        const ResultCallback<std::vector<HelixStream>, HelixPaginationState>
+            &pageCallback,
+        const FailureCallback<QString> &failureCallback,
+        CancellationToken &&token) final;
+
     /// https://dev.twitch.tv/docs/api/reference#create-poll
     void createPoll(QString broadcasterID, QString title, QStringList choices,
                     std::chrono::seconds duration, int pointsPerVote,
@@ -1643,6 +1709,11 @@ public:
         ResultCallback<HelixSharedChatSession> successCallback,
         FailureCallback<HelixGetSharedChatSessionError, QString>
             failureCallback) final;
+
+    /// Technically not a helix request >:-)
+    /// https://dev.twitch.tv/docs/authentication/validate-tokens#validating-tokens
+    void validateToken(NetworkSuccessCallback successCallback,
+                       NetworkErrorCallback errorCallback) final;
 
     void update(QString clientId, QString oauthToken) final;
 

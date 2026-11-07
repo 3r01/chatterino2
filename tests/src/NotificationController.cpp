@@ -130,7 +130,7 @@ TEST(NotificationController, StatusMessagesRespectUsernameStyle)
             .expected = u"chinese_forsen (福森)"_s,
         },
 
-        // Capitalization survives
+        // Case-only display names use the display name
         {
             .mode = UsernameDisplayMode::Username,
             .displayName = u"cHiNeSe_FoRsEn"_s,

@@ -11,7 +11,7 @@
 #include "util/QStringHash.hpp"
 
 #include <QColor>
-#include <QTime>
+#include <QDateTime>
 
 #include <cinttypes>
 #include <memory>
@@ -46,7 +46,6 @@ struct Message {
     // const-correct way to deal with this is.
     // This might bring race conditions with it
     mutable MessageFlags flags;
-    QTime parseTime;
     QString id;
     QString searchText;
     QString messageText;
@@ -59,7 +58,7 @@ struct Message {
     QString timeoutUser;
     QString channelName;
     QColor usernameColor;
-    QDateTime serverReceivedTime;
+    QDateTime timestamp;
 
     /// List of Twitch badges associated with this message
     std::vector<TwitchBadge> twitchBadges;

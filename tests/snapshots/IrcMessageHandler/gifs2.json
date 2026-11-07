@@ -182,7 +182,7 @@
             "loginName": "twitchdev",
             "messageText": "before [Y A Y Yes GIF by Djemilah Birnie] after",
             "searchText": "twitchdev  twitchdev: before [Y A Y Yes GIF by Djemilah Birnie] after ",
-            "serverReceivedTime": "2026-07-09T21:35:07Z",
+            "timestamp": "2026-07-09T21:35:07Z",
             "timeoutUser": "",
             "twitchBadgeInfos": {
                 "subscriber": "30"
@@ -194,5 +194,12 @@
             "userID": "141981764",
             "usernameColor": "#ff033700"
         }
-    ]
+    ],
+    "settings": {
+        "appearance": {
+            "messages": {
+                "showTwitchGifs": false
+            }
+        }
+    }
 }

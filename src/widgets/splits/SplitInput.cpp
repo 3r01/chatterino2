@@ -653,6 +653,14 @@ int SplitInput::scaledMaxHeight() const
 void SplitInput::addShortcuts()
 {
     HotkeyController::HotkeyMap actions{
+        {"cancelReply",
+         [this](const std::vector<QString> &) -> QString {
+             if (this->replyTarget_ != nullptr)
+             {
+                 this->setReply(nullptr);
+             }
+             return {};
+         }},
         {"cursorToStart",
          [this](const std::vector<QString> &arguments) -> QString {
              this->stopHistorySearchIfNecessary();
@@ -763,6 +771,7 @@ void SplitInput::addShortcuts()
              QTextCursor cursor = this->ui_.textEdit->textCursor();
              cursor.movePosition(QTextCursor::End);
              this->ui_.textEdit->setTextCursor(cursor);
+             this->hideCompletionPopup();
 
              return "";
          }},
@@ -815,6 +824,7 @@ void SplitInput::addShortcuts()
                  QTextCursor cursor = this->ui_.textEdit->textCursor();
                  cursor.movePosition(QTextCursor::End);
                  this->ui_.textEdit->setTextCursor(cursor);
+                 this->hideCompletionPopup();
              }
              return "";
          }},
@@ -919,6 +929,15 @@ void SplitInput::addShortcuts()
          }},
     };
 
+    if (!this->enableInlineReplying_)
+    {
+        // Disable the hotkey if inline replying is not enabled (i.e. reply popups)
+        // The reply thread popup uses the `Popup windows -> Close` hotkey already,
+        // and clearing its reply target would leave it open but make subsequent
+        // messages send outside the thread
+        actions["cancelReply"] = nullptr;
+    }
+
     this->shortcuts_ = getApp()->getHotkeys()->shortcutsForCategory(
         HotkeyCategory::SplitInput, actions, this->parentWidget());
 }
@@ -930,7 +949,7 @@ bool SplitInput::eventFilter(QObject *obj, QEvent *event)
     {
         if (auto *popup = this->inputCompletionPopup_.data())
         {
-            if (popup->isVisible())
+            if (popup->isVisible() && popup->hasCompletions())
             {
                 // Stop shortcut from triggering by saying we will handle it ourselves
                 event->accept();
@@ -1015,16 +1034,26 @@ void SplitInput::installTextEditEvents()
                 cursor.setPosition(static_cast<int>(word.end() - text.begin()),
                                    QTextCursor::KeepAnchor);
 
+                auto *firstAction = menu->actions().value(0);
                 auto suggestions =
                     getApp()->getSpellChecker()->suggestions(word.toString());
                 for (const auto &sugg :
                      suggestions | std::views::take(nSuggestions))
                 {
                     auto qSugg = QString::fromStdString(sugg);
-                    menu->addAction(qSugg, [this, qSugg, cursor]() mutable {
-                        cursor.insertText(qSugg);
-                        this->ui_.textEdit->setTextCursor(cursor);
-                    });
+                    auto *action = new QAction(qSugg, menu);
+                    QObject::connect(
+                        action, &QAction::triggered, this,
+                        [this, qSugg, cursor]() mutable {
+                            cursor.insertText(qSugg);
+                            this->ui_.textEdit->setTextCursor(cursor);
+                        });
+                    menu->insertAction(firstAction, action);
+                }
+
+                if (!suggestions.empty())
+                {
+                    menu->insertSeparator(firstAction);
                 }
             }
 #else
@@ -1072,6 +1101,11 @@ void SplitInput::updateCompletionPopup()
 
     // check if in completion prefix
     auto &edit = *this->ui_.textEdit;
+    if (edit.isCompletionInProgress())
+    {
+        this->hideCompletionPopup();
+        return;
+    }
 
     auto text = edit.toPlainText();
     auto position = edit.textCursor().position() - 1;
@@ -1131,8 +1165,16 @@ void SplitInput::showCompletionPopup(const QString &text, CompletionKind kind)
             [that = QPointer(this)](const QString &text) mutable {
                 if (auto *this2 = that.data())
                 {
+                    auto completions =
+                        this2->inputCompletionPopup_->selectedCompletions(
+                            this2->ui_.textEdit->isFirstWord());
                     this2->insertCompletionText(text);
                     this2->hideCompletionPopup();
+                    if (completions)
+                    {
+                        auto [items, index] = *completions;
+                        this2->ui_.textEdit->continueCompletion(items, index);
+                    }
                 }
             });
     }
@@ -1184,10 +1226,10 @@ void SplitInput::insertCompletionText(const QString &input_) const
         if (done)
         {
             auto cursor = edit.textCursor();
-            edit.setPlainText(
-                text.remove(i, position - i + 1).insert(i, input));
+            cursor.setPosition(i);
+            cursor.setPosition(position + 1, QTextCursor::KeepAnchor);
+            cursor.insertText(input);
 
-            cursor.setPosition(i + input.size());
             edit.setTextCursor(cursor);
             break;
         }
@@ -1219,6 +1261,40 @@ QString SplitInput::getInputText() const
 void SplitInput::insertText(const QString &text)
 {
     this->ui_.textEdit->insertPlainText(text);
+}
+
+void SplitInput::setWhisperTarget(const QString &username) const
+{
+    auto cursor = this->ui_.textEdit->textCursor();
+    cursor.beginEditBlock();
+    cursor.movePosition(QTextCursor::Start);
+    const auto input = this->getInputText();
+    if (TWITCH_WHISPER_COMMANDS.contains(input.section(' ', 0, 0)))
+    {
+        auto prefixEnd = input.indexOf(' ');
+        if (prefixEnd < 0)
+        {
+            prefixEnd = input.size();
+        }
+        while (prefixEnd < input.size() && input[prefixEnd] == ' ')
+        {
+            ++prefixEnd;
+        }
+        while (prefixEnd < input.size() && input[prefixEnd] != ' ')
+        {
+            ++prefixEnd;
+        }
+        if (prefixEnd < input.size())
+        {
+            ++prefixEnd;
+        }
+        cursor.setPosition(static_cast<int>(prefixEnd),
+                           QTextCursor::KeepAnchor);
+    }
+    cursor.insertText("/w " + username + " ");
+    cursor.endEditBlock();
+    cursor.movePosition(QTextCursor::End);
+    this->ui_.textEdit->setTextCursor(cursor);
 }
 
 void SplitInput::hide()
@@ -1269,7 +1345,8 @@ void SplitInput::editTextChanged()
 
     if (this->shouldPreventInput(text))
     {
-        this->ui_.textEdit->setPlainText(text.left(TWITCH_MESSAGE_LIMIT));
+        this->ui_.textEdit->setPlainText(
+            codepointSlice(text, 0, TWITCH_MESSAGE_LIMIT).toString());
         this->ui_.textEdit->moveCursor(QTextCursor::EndOfBlock);
         return;
     }
@@ -1293,21 +1370,43 @@ void SplitInput::editTextChanged()
                                                true);
     }
 
+    const auto textLength = codepointLength(text);
+
     QList<QTextEdit::ExtraSelection> selections;
-    if (text.length() > 0 &&
+    if (this->enableInlineReplying_ && this->replyTarget_ != nullptr)
+    {
+        const auto prefix = "@" + this->replyTarget_->displayName;
+        const auto input = this->ui_.textEdit->toPlainText();
+        if (input == prefix || input.startsWith(prefix + ' '))
+        {
+            QTextCursor cursor(this->ui_.textEdit->document());
+            cursor.setPosition(
+                static_cast<int>(qMin(input.size(), prefix.size() + 1)),
+                QTextCursor::KeepAnchor);
+            QTextCharFormat format;
+            format.setForeground(
+                this->theme->messages.textColors.chatPlaceholder);
+            selections.append({.cursor = cursor, .format = format});
+        }
+    }
+    if (textLength > 0 &&
         getSettings()->messageOverflow.getValue() == MessageOverflow::Highlight)
     {
         QTextCursor cursor = this->ui_.textEdit->textCursor();
         QTextCharFormat format;
 
-        cursor.setPosition(qMin(text.length(), TWITCH_MESSAGE_LIMIT),
-                           QTextCursor::MoveAnchor);
+        const auto limitPosition = static_cast<int>(
+            textLength > TWITCH_MESSAGE_LIMIT
+                ? codepointSlice(text, 0, TWITCH_MESSAGE_LIMIT).size()
+                : text.length());
+
+        cursor.setPosition(limitPosition, QTextCursor::MoveAnchor);
         cursor.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
         selections.append({cursor, format});
 
-        if (text.length() > TWITCH_MESSAGE_LIMIT)
+        if (textLength > TWITCH_MESSAGE_LIMIT)
         {
-            cursor.setPosition(TWITCH_MESSAGE_LIMIT, QTextCursor::MoveAnchor);
+            cursor.setPosition(limitPosition, QTextCursor::MoveAnchor);
             cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
             format.setForeground(Qt::red);
             selections.append({cursor, format});
@@ -1344,10 +1443,10 @@ void SplitInput::editTextChanged()
 
     QString labelText;
 
-    if (text.length() > 0 && getSettings()->showMessageLength)
+    if (textLength > 0 && getSettings()->showMessageLength)
     {
-        labelText = QString::number(text.length());
-        if (text.length() > TWITCH_MESSAGE_LIMIT)
+        labelText = QString::number(textLength);
+        if (textLength > TWITCH_MESSAGE_LIMIT)
         {
             this->ui_.textEditLength->setStyleSheet("color: red");
         }
@@ -1395,33 +1494,39 @@ void SplitInput::paintEvent(QPaintEvent * /*event*/)
 {
     QPainter painter(this);
 
-    QColor borderColor =
-        this->theme->isLightTheme() ? QColor("#ccc") : QColor("#333");
+    const auto borderColor =
+        this->theme->isLightTheme() ? QColor(0xcccccc) : QColor(0x333333);
 
-    QRect baseRect = this->rect();
-    baseRect.setWidth(baseRect.width() - 1);
+    const auto drawBorder = [&painter, &borderColor](QRect rect) {
+        if (rect.isEmpty())
+        {
+            return;
+        }
 
-    auto *inputWrap = this->ui_.inputWrapper;
-    auto inputBoxRect = inputWrap->geometry();
-    inputBoxRect.setSize(inputBoxRect.size() - QSize{1, 1});
+        painter.fillRect(rect.left(), rect.top(), rect.width(), 1, borderColor);
+        painter.fillRect(rect.left(), rect.bottom(), rect.width(), 1,
+                         borderColor);
+        painter.fillRect(rect.left(), rect.top(), 1, rect.height(),
+                         borderColor);
+        painter.fillRect(rect.right(), rect.top(), 1, rect.height(),
+                         borderColor);
+    };
 
-    painter.setBrush({this->backgroundColor()});
-    painter.setPen(borderColor);
-    painter.drawRect(inputBoxRect);
+    const auto inputBoxRect = this->ui_.inputWrapper->geometry();
+    painter.fillRect(inputBoxRect, this->backgroundColor());
+    drawBorder(inputBoxRect);
 
     if (this->enableInlineReplying_ && this->replyTarget_ != nullptr)
     {
-        auto replyRect = this->ui_.replyWrapper->geometry();
-        replyRect.setSize(replyRect.size() - QSize{1, 1});
+        const auto replyRect = this->ui_.replyWrapper->geometry();
+        painter.fillRect(replyRect, this->theme->splits.input.background);
+        drawBorder(replyRect);
 
-        painter.setBrush(this->theme->splits.input.background);
         painter.setPen(borderColor);
-        painter.drawRect(replyRect);
-
         QPoint replyLabelBorderStart(
             replyRect.x(),
             replyRect.y() + this->ui_.replyHbox->geometry().height());
-        QPoint replyLabelBorderEnd(replyRect.right(),
+        QPoint replyLabelBorderEnd(replyRect.right() - 1,
                                    replyLabelBorderStart.y());
         painter.drawLine(replyLabelBorderStart, replyLabelBorderEnd);
     }
@@ -1484,6 +1589,7 @@ void SplitInput::setReply(MessagePtr target)
 
             // Only enable reply label if inline replying
             auto replyPrefix = "@" + this->replyTarget_->displayName;
+            this->ui_.textEdit->setIgnoredCompletionPrefix(replyPrefix + ' ');
             auto plainText = this->ui_.textEdit->toPlainText().trimmed();
 
             // This makes it so if plainText contains "@StreamerFan" and
@@ -1545,6 +1651,7 @@ void SplitInput::clearInput()
 
 void SplitInput::clearReplyTarget()
 {
+    this->ui_.textEdit->setIgnoredCompletionPrefix({});
     this->replyTarget_.reset();
     this->ui_.replyMessage->clearMessage();
     this->ui_.vbox->setSpacing(0);
@@ -1574,7 +1681,7 @@ bool SplitInput::shouldPreventInput(const QString &text) const
         return false;
     }
 
-    return text.length() > TWITCH_MESSAGE_LIMIT;
+    return codepointLength(text) > TWITCH_MESSAGE_LIMIT;
 }
 
 int SplitInput::marginForTheme() const
